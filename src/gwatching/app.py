@@ -5,7 +5,7 @@ Created on 29.12.2016
 '''
 import logging
 from trello import Api
-from trello.objects import Label, Checklist
+from trello.objects import Label, Checklist, Notification
 import re
 import itertools
 import requests
@@ -13,6 +13,7 @@ from lxml.html import fromstring
 from cProfile import label
 import collections
 from datetime import datetime
+import argparse
 
 sre_http = '(?:(?:https?|ftp):\/\/)(?:\S+(?::\S*)?@)?(?:(?!(?:10|127)(?:\.\d{1,3}){3})(?!(?:169\.254|192\.168)(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,}))\.?)(?::\d{2,5})?(?:[/?#]\S*)?'
 
@@ -199,7 +200,7 @@ class AnimePlanet(Scrapper):
 class Imdb(Scrapper):
     
     host = "http://www.imdb.com"
-    re_cover_url = re.compile('^(.*?/[0-9a-zA-Z]+@?\.).*$')
+    re_cover_url = re.compile('^(.*?/[0-9a-zA-Z]+@?)\..*$')
     re_tid = re.compile('^.*/title/(tt[0-9]+).*$')
     
     def __init__(self, is_movie=False):
@@ -338,11 +339,29 @@ class TrelloShowUpdater(object):
     
     def clean(self, board):
         for l in list(board.labels):
-            if l.uses == 0:
+            if l.uses == 0 and l.color is Label.NO_COLOR:
+                print("Removing label %r" % l.name)
                 board.labels.remove(l)
     
+    def update_card(self, board, c, aired_label):
+        print("Checking card %r" % c.name)
+        label_names = set(l.name for l in c.labels)
+
+        if self.airing_ended_label in label_names:
+            self.logger.info("Skipping already aired show on card %r", c)
+            return
+
+        found_labels = label_names.intersection(self.updaters.keys())
+        if found_labels:
+            self.updaters.get(found_labels.pop()).update(board, c, aired_label)
+        else:
+            self.logger.info("No supported labels for card %r", c.id)
+
     def update(self, board_id):
-        board = self.get_api().get_board(board_id)
+        api = self.get_api()
+        board = api.get_board(board_id)
+
+        cards_checked = []
         
         aired_label = None
         for label in board.labels:
@@ -351,24 +370,40 @@ class TrelloShowUpdater(object):
         if not aired_label:
             aired_label = board.labels.add(name=self.airing_ended_label, color=Label.BLACK)
         
+        for n in api.get_notifications():
+            if not n.unread:
+                continue
+
+            if n.type == Notification.CREATED_CARD:
+                if n.board is board:
+                    cards_checked.append(n.card.id)
+                    self.update_card(board, n.card, aired_label)
+            else:
+                print("Skipping notification of type %r" % n.type)
+
+            n.read()
+
         for l in board.lists:
+            print("Checking list %r" % l.name)
             for c in l.cards:
-                label_names = set(l.name for l in c.labels)
-                
-                if self.airing_ended_label in label_names:
-                    self.logger.info("Skipping already aired show on card %r", c)
+                if c.id in cards_checked:
                     continue
-                
-                found_labels = label_names.intersection(self.updaters.keys())
-                if found_labels:
-                    self.updaters.get(found_labels.pop()).update(board, c, aired_label)
-                else:
-                    self.logger.info("No supported labels for card %r", c.id)
-                    continue
-        
+                self.update_card(board, c, aired_label)
+
         self.clean(board)
         
 if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--anime')
+    parser.add_argument('--movie')
+    parser.add_argument('--series')
+    parser.add_argument('--all')
+
+    parser.add_argument('--short')
+
+    parser.add_argument('-v')
+
     logging.basicConfig(level=logging.INFO)
     
     t = TrelloShowUpdater()
@@ -383,7 +418,7 @@ if __name__ == "__main__":
     
     #print(b.get_labels())
     #test_label = b.create_label("test", Label.RED)
-    
+
     """
     b = a.get_board('aaa')
     for l in b.get_lists():
