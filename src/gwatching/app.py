@@ -4,16 +4,18 @@ Created on 29.12.2016
 @author: glorpen
 '''
 import logging
-from trello import Api
-from trello.objects import Label, Checklist, Notification
+from trello.objects import Label, Notification
 import re
 import itertools
 import requests
 from lxml.html import fromstring
-from cProfile import label
 import collections
 from datetime import datetime
 import argparse
+from PIL import Image
+import io
+import mimetypes
+from trello.connection import Api, ConsoleUI
 
 sre_http = '(?:(?:https?|ftp):\/\/)(?:\S+(?::\S*)?@)?(?:(?!(?:10|127)(?:\.\d{1,3}){3})(?!(?:169\.254|192\.168)(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,}))\.?)(?::\d{2,5})?(?:[/?#]\S*)?'
 
@@ -23,6 +25,17 @@ class Scrapper(object):
     re_http_link = re.compile('(?P<url>'+sre_http+')')
     re_normalized_link = re.compile('^\s*Source\s*:\s+\[[^\]]+\]\((?P<url>'+sre_http+')\)\s*$', re.MULTILINE)
     
+    def compress_image(self, image_data):
+        ret = io.BytesIO()
+        with Image.open(io.BytesIO(image_data)) as im:
+            im.save(ret, "JPEG")
+        ret.seek(0)
+        return ret
+
+    def detect_mime_type(self, image_data):
+        with Image.open(io.BytesIO(image_data)) as im:
+            return mimetypes.guess_type("file.%s" % im.format)[0]
+
     def __init__(self):
         super(Scrapper, self).__init__()
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -152,7 +165,16 @@ class Scrapper(object):
         card.description = self.create_description(data["description"], data["url"])
         
         if not card.cover and data["cover"]:
-            a = card.attachments.add(name="cover", url=data["cover"])
+
+            cover_data = self.session.get(data["cover"]).content
+
+            if len(cover_data) > (1<<21):
+                cover_data = self.compress_image(cover_data)
+                mime_type = "image/jpeg"
+            else:
+                mime_type = self.detect_mime_type(cover_data)
+
+            a = card.attachments.add(name="cover", file=cover_data, mime_type=mime_type)
             card.cover = a
         
         self.update_seasons(card, data["episodes"])
@@ -311,6 +333,11 @@ class Imdb(Scrapper):
             
         return ret, ended
 
+class Ui(ConsoleUI):
+    def load_token(self):
+        return "xxx"
+
+
 class TrelloShowUpdater(object):
     
     api = None
@@ -343,8 +370,8 @@ class TrelloShowUpdater(object):
                 print("Removing label %r" % l.name)
                 board.labels.remove(l)
     
-    def update_card(self, board, c, aired_label):
-        print("Checking card %r" % c.name)
+    def update_card(self, board, l, c, aired_label, allowed_labels):
+        print("Checking card %r/%r" % (l.name, c.name))
         label_names = set(l.name for l in c.labels)
 
         if self.airing_ended_label in label_names:
@@ -353,13 +380,24 @@ class TrelloShowUpdater(object):
 
         found_labels = label_names.intersection(self.updaters.keys())
         if found_labels:
-            self.updaters.get(found_labels.pop()).update(board, c, aired_label)
+            if found_labels.intersection(allowed_labels):
+                print("Updating")
+                self.updaters.get(found_labels.pop()).update(board, c, aired_label)
+                return True
+            else:
+                return False
         else:
             self.logger.info("No supported labels for card %r", c.id)
+            return None
 
-    def update(self, board_id):
+    def update(self, board_id, short=False, allowed_labels=None):
         api = self.get_api()
         board = api.get_board(board_id)
+        board.subscribed = True
+
+        allowed_labels = set(allowed_labels or self.updaters.keys())
+
+        me = api.get_me()
 
         cards_checked = []
         
@@ -370,85 +408,64 @@ class TrelloShowUpdater(object):
         if not aired_label:
             aired_label = board.labels.add(name=self.airing_ended_label, color=Label.BLACK)
         
-        for n in api.get_notifications():
+        for n in me.notifications:
             if not n.unread:
                 continue
 
             if n.type == Notification.CREATED_CARD:
                 if n.board is board:
                     cards_checked.append(n.card.id)
-                    self.update_card(board, n.card, aired_label)
+                    if self.update_card(board, n.list, n.card, aired_label, allowed_labels) is False:
+                        continue
             else:
                 print("Skipping notification of type %r" % n.type)
 
             n.read()
+
+        if short:
+            return
 
         for l in board.lists:
             print("Checking list %r" % l.name)
             for c in l.cards:
                 if c.id in cards_checked:
                     continue
-                self.update_card(board, c, aired_label)
+                self.update_card(board, l, c, aired_label, allowed_labels)
 
         self.clean(board)
         
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--anime')
-    parser.add_argument('--movie')
-    parser.add_argument('--series')
-    parser.add_argument('--all')
+    parser.add_argument('--anime', '-a', action='append_const', const="anime", dest="labels")
+    parser.add_argument('--movie', '-m', action='append_const', const="movie", dest="labels")
+    parser.add_argument('--series', '-s', action='append_const', const="series", dest="labels")
 
-    parser.add_argument('--short')
+    parser.add_argument('--short', action='store_true')
 
-    parser.add_argument('-v')
+    parser.add_argument('--verbose', '-v', action='count', default=0)
 
-    logging.basicConfig(level=logging.INFO)
+    args = parser.parse_args()
+
+    log_levels = [
+        logging.ERROR,
+        logging.WARN,
+        logging.INFO,
+        logging.DEBUG
+    ]
+
+    log_level = log_levels[min(len(log_levels), args.verbose)]
+    logging.basicConfig(level=log_level)
+
     
     t = TrelloShowUpdater()
-    
     t.register_updater("anime", AnimePlanet())
     t.register_updater("movie", Imdb(True))
     t.register_updater("series", Imdb(False))
     
-    t.update('zzz')
-    #t.update('xxx')
+    labels = args.labels or None
     
-    
-    #print(b.get_labels())
-    #test_label = b.create_label("test", Label.RED)
+    #t.update('aaa', short=args.short, allowed_labels=labels) #4CnhxrXj
+    t.update('aaa', short=args.short, allowed_labels=labels)
+    #t.update('aaa', short=args.short, allowed_labels=labels)
 
-    """
-    b = a.get_board('aaa')
-    for l in b.get_lists():
-        print("List: %s" % l.name)
-        #l.name = "%s1" % l.name
-        for c in l.get_cards():
-            print("Name: ", c.name)
-            print("Description:")
-            print(c.description)
-            print(c.due, c.dueComplete)
-            
-            print(c.labels)
-            
-            print("Attachments:")
-            for a in c.attachments:
-                print(a.name)
-            
-            print("Cover: ", c.cover)
-            
-            print("Checklists:")
-            
-            for cl in c.checklists:
-                print(cl.id)
-                print("Name:", cl.name)
-                for ci in cl.items:
-                    print("Item:", ci.name)
-            
-            #c.labels.add(test_label)
-            
-            a = c.attachments.add(name="some name", url="https://myanimelist.cdn-dena.com/images/anime/6/4052.jpg")
-            c.cover = a
-            break
-    """
