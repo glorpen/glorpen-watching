@@ -252,16 +252,15 @@ class Imdb(Scrapper):
         return url.startswith(self.host+"/")
     
     def get_info(self, x):
-        title = None
+        titles = []
         
         url = x.xpath('//meta[@property="og:url"]/@content')[0]
         
         org_title_els = x.xpath('//div[@class="originalTitle"]/text()')
         if org_title_els:
-            title = org_title_els[0]
-        
-        if not title:
-            title = x.xpath('//h1[@itemprop="name"]/text()')[0].strip()
+            titles.append(org_title_els[0])
+            
+        titles.append(x.xpath('//h1[@itemprop="name"]/text()')[0].strip())
         
         if self.is_movie:
             episodes = {}
@@ -270,7 +269,7 @@ class Imdb(Scrapper):
             tid = self.re_tid.match(url).group(1)
             episodes, ended = self.get_episodes_count(tid)
         
-        genres = [i.strip().lower() for i in x.xpath('//span[@itemprop="genre"]/text()')]
+        genres = list(filter(None, [i.strip().lower() for i in x.xpath('//*[@itemprop="genre"]/text()')]))
         
         images = list(filter(None, (self.re_cover_url.match(i) for i in x.xpath('//meta[@property="og:image"]/@content') if "imdb/images/logos" not in i)))
         
@@ -280,11 +279,11 @@ class Imdb(Scrapper):
         else:
             cover = None
         
-        description = ("\n".join(i.strip() for i in x.xpath('//div[@itemprop="description"]/text()'))).strip()
+        description = ("\n".join(i.strip() for i in x.xpath('//*[@itemprop="description"]/text()'))).strip()
         
         return {
             "url": url,
-            "names": [title],
+            "names": titles,
             "episodes": episodes,
             "genres": genres,
             "cover": cover,
