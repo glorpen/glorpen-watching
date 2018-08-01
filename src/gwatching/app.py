@@ -17,6 +17,7 @@ import io
 import mimetypes
 from grello.connection import Api
 from grello.ui import ConsoleUi
+import gwatching
 
 sre_http = '(?:(?:https?|ftp):\/\/)(?:\S+(?::\S*)?@)?(?:(?!(?:10|127)(?:\.\d{1,3}){3})(?!(?:169\.254|192\.168)(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,}))\.?)(?::\d{2,5})?(?:[/?#]\S*)?'
 
@@ -87,11 +88,13 @@ class Scrapper(object):
             if len(alt_names) > 1:
                 alt_names_text = "> Alt titles:\n%s\n\n" % ("\n".join("> *%s*" % i for i in alt_names))
             else:
-                alt_names_text = "> Alt title: *%s*\n\n" % alt_names[1]
+                alt_names_text = "> Alt title: *%s*\n\n" % alt_names[0]
         else:
             alt_names_text = ""
+        
+        version_text = "Version: %s" % gwatching.__version__
 
-        return "%s%s\n\n---\n\n%s" % (alt_names_text, text, link)
+        return "%s%s\n\n---\n\n%s\n%s" % (alt_names_text, text, link, version_text)
     
     def is_known_url(self, url):
         raise NotImplementedError()
@@ -192,7 +195,9 @@ class Scrapper(object):
         #self.clean_board_labels(board)
         
         if data["ended"]:
-            card.labels.add(aired_label)
+            if aired_label not in card.labels:
+                self.logger.debug("Adding 'already aired' label")
+                card.labels.add(aired_label)
     
     def fetch_page(self, url, params = {}):
         s = self.session.get(url, headers=self.headers, params=params).content.decode()
@@ -384,14 +389,25 @@ class TrelloShowUpdater(object):
 #                 print("Removing label %r" % l.name)
 #                 board.labels.remove(l)
     
+    re_version = re.compile('.*Version: ([0-9.]+)$', re.DOTALL)
+
     def update_card(self, board, l, c, aired_label, allowed_labels):
         print("Checking card %r/%r" % (l.name, c.name))
         label_names = set(l.name for l in c.labels)
+        
+        m_version = self.re_version.match(c.description)
+        if m_version:
+            version = m_version.group(1)
+        else:
+            version = None
 
-        if self.airing_ended_label in label_names:
-            self.logger.info("Skipping already aired show on card %r", c)
-            return
-
+        if version == gwatching.__version__:
+            if self.airing_ended_label in label_names:
+                self.logger.info("Skipping already aired show on card %r", c)
+                return
+        else:
+            self.logger.info("Updating card version from %s to %s", version, gwatching.__version__)
+        
         found_labels = label_names.intersection(self.updaters.keys())
         if found_labels:
             if found_labels.intersection(allowed_labels):
