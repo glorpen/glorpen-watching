@@ -76,14 +76,22 @@ class Scrapper(object):
         
         self.update_card(board, card, data, aired_label)
     
-    def create_description(self, text, url):
+    def create_description(self, text, url, alt_names=[]):
         if len(url) > 46:
             name = url[:46] + "..."
         else:
             name = url
         
         link = "Source: [%s](%s)" % (name, url)
-        return "%s\n\n---\n\n%s" % (text, link) 
+        if alt_names:
+            if len(alt_names) > 1:
+                alt_names_text = "> Alt titles:\n%s\n\n" % ("\n".join("> *%s*" % i for i in alt_names))
+            else:
+                alt_names_text = "> Alt title: *%s*\n\n" % alt_names[1]
+        else:
+            alt_names_text = ""
+
+        return "%s%s\n\n---\n\n%s" % (alt_names_text, text, link)
     
     def is_known_url(self, url):
         raise NotImplementedError()
@@ -162,8 +170,8 @@ class Scrapper(object):
                 checklist.items.add(name=v)
     
     def update_card(self, board, card, data, aired_label):
-        card.name = data["name"]
-        card.description = self.create_description(data["description"], data["url"])
+        card.name = data["names"][0]
+        card.description = self.create_description(data["description"], data["url"], data["names"][1:])
         
         if not card.cover and data["cover"]:
 
@@ -207,17 +215,21 @@ class AnimePlanet(Scrapper):
         
         ended = "Watched" in x.xpath('//div[contains(@class, "entrySynopsis")]/following-sibling::form//select[@class="changeStatus"]/option/text()')
         episodes = int(x.xpath('//div[contains(@class, "entrySynopsis")]/following-sibling::form//select[@data-eps]/@data-eps')[0])
-        name = x.xpath('//h1[@itemprop="name"]/text()')[0]
+        names = [x.xpath('//h1[@itemprop="name"]/text()')[0]]
         genres = tuple(str(g).lower() for g in x.xpath('//li[@itemprop="genre"]/a/text()'))
         url = x.xpath('//link[@rel="canonical"]/@href')[0]
         
+        alt_title = x.xpath('//h2[@class="aka"]/text()')
+        if alt_title:
+            names.append(x.xpath('//h2[@class="aka"]/text()')[0][11:])
+
         return {
             "url": url,
             "cover": cover,
             "description": description,
             "ended": ended,
             "episodes": {"Episodes": list(("%.2d" % e) for e in range(1, episodes+1))},
-            "name": name,
+            "names": names,
             "genres": genres
         }
 
@@ -267,7 +279,7 @@ class Imdb(Scrapper):
         
         return {
             "url": url,
-            "name": title,
+            "names": [title],
             "episodes": episodes,
             "genres": genres,
             "cover": cover,
@@ -471,6 +483,6 @@ if __name__ == "__main__":
     labels = args.labels or None
     
     #t.update('aaa', short=args.short, allowed_labels=labels) #4CnhxrXj
-    t.update('aaa', short=args.short, allowed_labels=labels)
     #t.update('aaa', short=args.short, allowed_labels=labels)
+    t.update('aaa', short=args.short, allowed_labels=labels)
 
