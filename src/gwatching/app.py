@@ -4,7 +4,7 @@ Created on 29.12.2016
 @author: glorpen
 '''
 import logging
-from trello.objects import Label, Notification
+from grello.objects import Label, Notification
 import re
 import itertools
 import requests
@@ -15,7 +15,8 @@ import argparse
 from PIL import Image
 import io
 import mimetypes
-from trello.connection import Api, ConsoleUI
+from grello.connection import Api
+from grello.ui import ConsoleUi
 
 sre_http = '(?:(?:https?|ftp):\/\/)(?:\S+(?::\S*)?@)?(?:(?!(?:10|127)(?:\.\d{1,3}){3})(?!(?:169\.254|192\.168)(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,}))\.?)(?::\d{2,5})?(?:[/?#]\S*)?'
 
@@ -108,10 +109,10 @@ class Scrapper(object):
             self.logger.debug("Adding label %r to %r", label, card)
             card.labels.add(label)
 
-    def clean_board_labels(self, board):
-        for l in list(board.labels):
-            if l.color is Label.NO_COLOR and l.uses == 0:
-                board.labels.remove(l)
+#     def clean_board_labels(self, board):
+#         for l in list(board.labels):
+#             if l.color is Label.NO_COLOR and l.uses == 0:
+#                 board.labels.remove(l)
     
     def _diff(self, current_items, target_keys):
         
@@ -180,7 +181,7 @@ class Scrapper(object):
         self.update_seasons(card, data["episodes"])
         
         self.update_genres(board, card, data["genres"])
-        self.clean_board_labels(board)
+        #self.clean_board_labels(board)
         
         if data["ended"]:
             card.labels.add(aired_label)
@@ -191,10 +192,11 @@ class Scrapper(object):
     
 class AnimePlanet(Scrapper):
     
-    host = 'http://www.anime-planet.com'
+    host = "https://www.anime-planet.com"
+    re_host = re.compile('^https?://www.anime-planet.com/')
     
     def is_known_url(self, url):
-        return url.startswith(self.host+"/")
+        return self.re_host.match(url) is not None
     
     def get_info(self, x):
         try:
@@ -333,9 +335,9 @@ class Imdb(Scrapper):
             
         return ret, ended
 
-class Ui(ConsoleUI):
-    def load_token(self):
-        return "xxx"
+class Ui(ConsoleUi):
+    def load_keys(self):
+        return ('xxx', 'xxx')
 
 
 class TrelloShowUpdater(object):
@@ -364,11 +366,11 @@ class TrelloShowUpdater(object):
     def register_updater(self, label_name, updater):
         self.updaters[label_name] = updater
     
-    def clean(self, board):
-        for l in list(board.labels):
-            if l.uses == 0 and l.color is Label.NO_COLOR:
-                print("Removing label %r" % l.name)
-                board.labels.remove(l)
+#     def clean(self, board):
+#         for l in list(board.labels):
+#             if l.uses == 0 and l.color is Label.NO_COLOR:
+#                 print("Removing label %r" % l.name)
+#                 board.labels.remove(l)
     
     def update_card(self, board, l, c, aired_label, allowed_labels):
         print("Checking card %r/%r" % (l.name, c.name))
@@ -412,10 +414,9 @@ class TrelloShowUpdater(object):
             if not n.unread:
                 continue
 
-            if n.type == Notification.CREATED_CARD:
-                if n.board is board:
-                    cards_checked.append(n.card.id)
-                    if self.update_card(board, n.list, n.card, aired_label, allowed_labels) is False:
+            if n.type in (Notification.CREATED_CARD, Notification.CHANGED_CARD):
+                if n.board and n.board is board and n.card:
+                    if self.update_card(board, n.card.list, n.card, aired_label, allowed_labels) is False:
                         continue
             else:
                 print("Skipping notification of type %r" % n.type)
@@ -428,11 +429,13 @@ class TrelloShowUpdater(object):
         for l in board.lists:
             print("Checking list %r" % l.name)
             for c in l.cards:
+#                 if c.id != "5a4a02bc30937b60be164eba":
+#                     continue
                 if c.id in cards_checked:
                     continue
                 self.update_card(board, l, c, aired_label, allowed_labels)
 
-        self.clean(board)
+        #self.clean(board)
         
 if __name__ == "__main__":
 
@@ -440,6 +443,7 @@ if __name__ == "__main__":
     parser.add_argument('--anime', '-a', action='append_const', const="anime", dest="labels")
     parser.add_argument('--movie', '-m', action='append_const', const="movie", dest="labels")
     parser.add_argument('--series', '-s', action='append_const', const="series", dest="labels")
+    parser.add_argument('--cartoon', '-c', action='append_const', const="cartoon", dest="labels")
 
     parser.add_argument('--short', action='store_true')
 
@@ -462,7 +466,8 @@ if __name__ == "__main__":
     t.register_updater("anime", AnimePlanet())
     t.register_updater("movie", Imdb(True))
     t.register_updater("series", Imdb(False))
-    
+    t.register_updater("cartoon", Imdb(False))
+
     labels = args.labels or None
     
     #t.update('aaa', short=args.short, allowed_labels=labels) #4CnhxrXj
