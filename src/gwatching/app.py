@@ -241,7 +241,6 @@ class AnimePlanet(Scrapper):
 class Imdb(Scrapper):
     
     host = "http://www.imdb.com"
-    re_cover_url = re.compile('^(.*?/[0-9a-zA-Z]+@?)\..*$')
     re_tid = re.compile('^.*/title/(tt[0-9]+).*$')
     
     def __init__(self, is_movie=False):
@@ -271,11 +270,10 @@ class Imdb(Scrapper):
         
         genres = list(filter(None, [i.strip().lower() for i in x.xpath('//*[@itemprop="genre"]/text()')]))
         
-        images = list(filter(None, (self.re_cover_url.match(i) for i in x.xpath('//meta[@property="og:image"]/@content') if "imdb/images/logos" not in i)))
+        images = list(filter(None, (str(i) for i in x.xpath('//meta[@property="og:image"]/@content') if "imdb/images/logos" not in i)))
         
         if images:
-            image = images[0]
-            cover = image.group(1)
+            cover = images[0]
         else:
             cover = None
         
@@ -498,6 +496,6 @@ if __name__ == "__main__":
     labels = args.labels or None
     
     #t.update('aaa', short=args.short, allowed_labels=labels) #4CnhxrXj
-    #t.update('aaa', short=args.short, allowed_labels=labels)
     t.update('aaa', short=args.short, allowed_labels=labels)
+    #t.update('aaa', short=args.short, allowed_labels=labels)
 
