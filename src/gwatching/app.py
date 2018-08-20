@@ -240,15 +240,16 @@ class AnimePlanet(Scrapper):
 
 class Imdb(Scrapper):
     
-    host = "http://www.imdb.com"
+    host = "www.imdb.com"
     re_tid = re.compile('^.*/title/(tt[0-9]+).*$')
+    re_url = re.compile('^https?://'+host+'/')
     
     def __init__(self, is_movie=False):
         super(Imdb, self).__init__()
         self.is_movie = is_movie
     
     def is_known_url(self, url):
-        return url.startswith(self.host+"/")
+        return self.re_url.match(url) is not None
     
     def get_info(self, x):
         titles = []
@@ -259,7 +260,7 @@ class Imdb(Scrapper):
         if org_title_els:
             titles.append(org_title_els[0])
             
-        titles.append(x.xpath('//h1[@itemprop="name"]/text()')[0].strip())
+        titles.append(x.xpath('//div[@class="title_wrapper"]/h1/text()')[0].strip())
         
         if self.is_movie:
             episodes = {}
@@ -268,7 +269,7 @@ class Imdb(Scrapper):
             tid = self.re_tid.match(url).group(1)
             episodes, ended = self.get_episodes_count(tid)
         
-        genres = list(filter(None, [i.strip().lower() for i in x.xpath('//*[@itemprop="genre"]/text()')]))
+        genres = list(filter(None, [i.strip().lower() for i in x.xpath('//div[@class="titleBar"]//a[starts-with(@href, "/genre/")]/text()')]))
         
         images = list(filter(None, (str(i) for i in x.xpath('//meta[@property="og:image"]/@content') if "imdb/images/logos" not in i)))
         
@@ -277,7 +278,7 @@ class Imdb(Scrapper):
         else:
             cover = None
         
-        description = ("\n".join(i.strip() for i in x.xpath('//*[@itemprop="description"]/text()'))).strip()
+        description = ("\n".join(i.strip() for i in x.xpath('//div[contains(@class, "plot_summary")]/div[contains(@class, "summary_text")]/text()'))).strip()
         
         return {
             "url": url,
@@ -290,7 +291,7 @@ class Imdb(Scrapper):
         }
 
     def get_episodes_count(self, tid):
-        url = "%s/title/%s/episodes/_ajax" % (self.host, tid)
+        url = "https://%s/title/%s/episodes/_ajax" % (self.host, tid)
         
         ret = collections.OrderedDict()
         ended = True
