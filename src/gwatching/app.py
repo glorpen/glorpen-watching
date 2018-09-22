@@ -15,7 +15,7 @@ import argparse
 from PIL import Image
 import io
 import mimetypes
-from grello.connection import Api
+from grello.connection import Api, NotFoundException
 from grello.ui import ConsoleUi
 import gwatching
 
@@ -442,8 +442,14 @@ class TrelloShowUpdater(object):
 
             if n.type in (Notification.CREATED_CARD, Notification.CHANGED_CARD):
                 if n.board and n.board is board and n.card:
-                    if self.update_card(board, n.card.list, n.card, aired_label, allowed_labels) is False:
-                        continue
+                    try:
+                        closed = n.card.closed
+                    except NotFoundException:
+                        closed = True
+
+                    if not closed:
+                        if self.update_card(board, n.card.list, n.card, aired_label, allowed_labels) is False:
+                            continue
             else:
                 print("Skipping notification of type %r" % n.type)
 
@@ -457,7 +463,7 @@ class TrelloShowUpdater(object):
             for c in l.cards:
 #                 if c.id != "5a4a02bc30937b60be164eba":
 #                     continue
-                if c.id in cards_checked:
+                if c.id in cards_checked or c.closed:
                     continue
                 self.update_card(board, l, c, aired_label, allowed_labels)
 
