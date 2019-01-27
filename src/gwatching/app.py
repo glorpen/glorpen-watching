@@ -390,6 +390,45 @@ class TrelloShowUpdater(object):
     def register_updater(self, label_name, updater):
         self.updaters[label_name] = updater
     
+    def check_uniqueness(self, board_id):
+        api = self.get_api()
+        board = api.get_board(board_id)
+
+        cards_checked = set()
+        known_labels = set(self.updaters.keys())
+        inventory = {}
+
+        for l in board.lists:
+            print("Checking list %r" % l.name)
+            for c in l.cards:
+                if c.id in cards_checked or c.closed:
+                    continue
+                cards_checked.add(c.id)
+
+                label_names = set(l.name for l in c.labels)
+                labels = known_labels.intersection(label_names)
+                if len(labels) == 0:
+                    self.logger.info("Unknown labels for %r", c.id)
+                    continue
+
+                uri = self.updaters[labels.pop()].find_data_links(c)
+                if not uri:
+                    self.logger.info("No data uri found for %r", c.id)
+                    continue
+
+                if not uri in inventory:
+                    inventory[uri] = []
+                inventory[uri].append(c)
+
+        print("Searching for duplicates...")
+        for uri,cards in inventory.items():
+            if len(cards) == 1:
+                continue
+            print("For uri %s:" % uri)
+            for c in cards:
+                print("  - duplicated card %r: %r/%r" % (c.id, c.list.name, c.name))
+        print("Done.")
+
 #     def clean(self, board):
 #         for l in list(board.labels):
 #             if l.uses == 0 and l.color is Label.NO_COLOR:
@@ -481,14 +520,22 @@ class TrelloShowUpdater(object):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--anime', '-a', action='append_const', const="anime", dest="labels")
-    parser.add_argument('--movie', '-m', action='append_const', const="movie", dest="labels")
-    parser.add_argument('--series', '-s', action='append_const', const="series", dest="labels")
-    parser.add_argument('--cartoon', '-c', action='append_const', const="cartoon", dest="labels")
-
-    parser.add_argument('--short', action='store_true')
 
     parser.add_argument('--verbose', '-v', action='count', default=0)
+
+    sp = parser.add_subparsers()
+
+    p = sp.add_parser('update')
+    p.set_defaults(action="update")
+    p.add_argument('--anime', '-a', action='append_const', const="anime", dest="labels")
+    p.add_argument('--movie', '-m', action='append_const', const="movie", dest="labels")
+    p.add_argument('--series', '-s', action='append_const', const="series", dest="labels")
+    p.add_argument('--cartoon', '-c', action='append_const', const="cartoon", dest="labels")
+
+    p.add_argument('--short', action='store_true')
+
+    p = sp.add_parser("check")
+    p.set_defaults(action="check")
 
     args = parser.parse_args()
 
@@ -502,16 +549,20 @@ if __name__ == "__main__":
     log_level = log_levels[min(len(log_levels), args.verbose)]
     logging.basicConfig(level=log_level)
 
-    
     t = TrelloShowUpdater()
     t.register_updater("anime", AnimePlanet())
     t.register_updater("movie", Imdb(True))
     t.register_updater("series", Imdb(False))
     t.register_updater("cartoon", Imdb(False))
-
-    labels = args.labels or None
     
-    #t.update('aaa', short=args.short, allowed_labels=labels) #4CnhxrXj
-    t.update('aaa', short=args.short, allowed_labels=labels)
-    #t.update('aaa', short=args.short, allowed_labels=labels)
+    board_id = '4CnhxrXj'
 
+    if args.action == "check":
+        t.check_uniqueness(board_id)
+
+    if args.action == "update":
+        labels = args.labels or None
+
+        #t.update('aaa', short=args.short, allowed_labels=labels) #4CnhxrXj
+        t.update(board_id, short=args.short, allowed_labels=labels)
+        #t.update('aaa', short=args.short, allowed_labels=labels)
