@@ -18,8 +18,13 @@ import mimetypes
 from grello.connection import Api, NotFoundException
 from grello.ui import ConsoleUi
 import gwatching
+import json
 
 sre_http = '(?:(?:https?|ftp):\/\/)(?:\S+(?::\S*)?@)?(?:(?!(?:10|127)(?:\.\d{1,3}){3})(?!(?:169\.254|192\.168)(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,}))\.?)(?::\d{2,5})?(?:[/?#]\S*)?'
+
+def get_unique_list(iter):
+    seen = set()
+    return [x for x in iter if not (x in seen or seen.add(x))]
 
 class Scrapper(object):
     headers = {'User-Agent': 'Mozilla/5.0 (DirectX; Windows 10; rv:38.0) Gecko/20100101 Firefox/38.0'}
@@ -254,12 +259,15 @@ class Imdb(Scrapper):
     def get_info(self, x):
         titles = []
         
-        url = x.xpath('//meta[@property="og:url"]/@content')[0]
+        v = x.xpath('//script[@type="application/ld+json"]')[0]
+        data = json.loads(v.text)
         
+        url = "https://%s%s" % (self.host, data["url"])
+
+        titles.append(data["name"])
         org_title_els = x.xpath('//div[@class="originalTitle"]/text()')
         if org_title_els:
             titles.append(org_title_els[0])
-            
         titles.append(x.xpath('//div[@class="title_wrapper"]/h1/text()')[0].strip())
         
         if self.is_movie:
@@ -269,7 +277,7 @@ class Imdb(Scrapper):
             tid = self.re_tid.match(url).group(1)
             episodes, ended = self.get_episodes_count(tid)
         
-        genres = list(filter(None, [i.strip().lower() for i in x.xpath('//div[@class="titleBar"]//a[starts-with(@href, "/genre/")]/text()')]))
+        genres = list(i.lower() for i in data["genre"])
         
         images = list(filter(None, (str(i) for i in x.xpath('//meta[@property="og:image"]/@content') if "imdb/images/logos" not in i)))
         
@@ -280,9 +288,10 @@ class Imdb(Scrapper):
         
         description = ("\n".join(i.strip() for i in x.xpath('//div[contains(@class, "plot_summary")]/div[contains(@class, "summary_text")]/text()'))).strip()
         
+
         return {
             "url": url,
-            "names": titles,
+            "names": get_unique_list(titles),
             "episodes": episodes,
             "genres": genres,
             "cover": cover,
