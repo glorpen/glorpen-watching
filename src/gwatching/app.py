@@ -27,8 +27,6 @@ def get_unique_list(iter):
     return [x for x in iter if not (x in seen or seen.add(x))]
 
 class Scrapper(object):
-    headers = {'User-Agent': 'Mozilla/5.0 (DirectX; Windows 10; rv:38.0) Gecko/20100101 Firefox/38.0'}
-    
     re_http_link = re.compile('(?P<url>'+sre_http+')')
     re_normalized_link = re.compile('^\s*Source\s*:\s+\[[^\]]+\]\((?P<url>'+sre_http+')\)\s*$', re.MULTILINE)
     
@@ -47,7 +45,10 @@ class Scrapper(object):
         super(Scrapper, self).__init__()
         self.logger = logging.getLogger(self.__class__.__name__)
         self.session = requests.Session()
-    
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:77.0) Gecko/20100101 Firefox/77.0'
+        })
+
     def find_urls(self, card):
         i = [
             self.re_normalized_link.finditer(card.description),
@@ -183,6 +184,7 @@ class Scrapper(object):
         
         if not card.cover and data["cover"]:
 
+            print(data["cover"])
             cover_data = self.session.get(data["cover"]).content
 
             if len(cover_data) > (1<<21):
@@ -205,7 +207,7 @@ class Scrapper(object):
                 card.labels.add(aired_label)
     
     def fetch_page(self, url, params = {}):
-        s = self.session.get(url, headers=self.headers, params=params).content.decode()
+        s = self.session.get(url, params=params).content.decode()
         return fromstring(s)
     
 class AnimePlanet(Scrapper):
@@ -219,19 +221,19 @@ class AnimePlanet(Scrapper):
     def get_info(self, x):
         try:
             cover = self.host+str(x.xpath('//img[@class="screenshots"]/@src')[0])
-            description = "\n".join(x.xpath('//div[@itemprop="description"]/p/text()'))
+            description = str(x.xpath('//meta[@property="og:description"]/@content')[0])
         except IndexError:
             return None
         
-        ended = "Watched" in x.xpath('//div[contains(@class, "entrySynopsis")]/following-sibling::form//select[@class="changeStatus"]/option/text()')
-        episodes = int(x.xpath('//div[contains(@class, "entrySynopsis")]/following-sibling::form//select[@data-eps]/@data-eps')[0])
+        ended = "Watched" in x.xpath('//div[contains(@class, "entrySynopsis")]//form//select[@class="changeStatus"]/option/text()')
+        episodes = int(x.xpath('//div[contains(@class, "entrySynopsis")]//form//select[@data-eps]/@data-eps')[0])
         names = [x.xpath('//h1[@itemprop="name"]/text()')[0]]
-        genres = tuple(str(g).lower() for g in x.xpath('//li[@itemprop="genre"]/a/text()'))
+        genres = tuple(str(g).lower() for g in x.xpath('//meta[@property="video:tag"]/@content'))
         url = x.xpath('//link[@rel="canonical"]/@href')[0]
         
         alt_title = x.xpath('//h2[@class="aka"]/text()')
         if alt_title:
-            names.append(x.xpath('//h2[@class="aka"]/text()')[0][11:])
+            names.append(alt_title[0][11:])
 
         return {
             "url": url,
@@ -361,7 +363,8 @@ class Imdb(Scrapper):
 
 class Ui(ConsoleUi):
     def load_keys(self):
-        return ('xxx', 'xxx')
+        return ('bbb', 'ccc')
+
 
 
 class TrelloShowUpdater(object):
@@ -379,7 +382,8 @@ class TrelloShowUpdater(object):
         if self.api is None:
             a = Api(
                 "aaa",
-                "bbb"
+                Ui(),
+                token_expiration='never'
             )
             a.assure_token("xxx")
             
