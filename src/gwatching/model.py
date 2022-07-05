@@ -9,17 +9,30 @@ class DuplicatedEntryException(ValueError):
 
 
 @dataclasses.dataclass
+class Date:
+    year: int
+    month: typing.Optional[int] = None
+    day: typing.Optional[int] = None
+
+    def __str__(self):
+        return "-".join([
+            f"{self.year:04d}",
+            "??" if self.month is None else f"{self.month:02d}",
+            "??" if self.day is None else f"{self.day:02d}",
+        ])
+
+
+@dataclasses.dataclass
 class Label:
     id: typing.Optional[str]
     name: str
-    color: str
+    color: typing.Optional[str]
 
     def __hash__(self):
         return hash(self.id)
 
     def __eq__(self, other: 'Label'):
         return self.id == other.id
-
 
 
 class DataLabels(enum.Enum):
@@ -34,33 +47,36 @@ class DataLabels(enum.Enum):
 @dataclasses.dataclass
 class ListItem:
     number: int
-    id: typing.Optional[str]
-    name: typing.Optional[str]
-    date: typing.Optional[datetime.date]
+    id: typing.Optional[str] = None
+    name: typing.Optional[str] = None
+    date: typing.Optional[Date] = None
 
 
 @dataclasses.dataclass
 class List:
-    id: typing.Optional[str]
     name: str
-    items: typing.Sequence[ListItem]
+    items: typing.Sequence[ListItem] = dataclasses.field(default_factory=list)
+    id: typing.Optional[str] = None
 
 
 @dataclasses.dataclass
 class ParsedRawDescription:
-    alt_titles: list[str]
-    description: typing.Optional[str]
+    alt_titles: typing.Sequence[str]
     source_url: str
+    description: typing.Optional[str]
 
 
 @dataclasses.dataclass
-class Card(ParsedRawDescription):
-    id: typing.Optional[str]
+class Card:
     title: str
-    labels: set[DataLabels]
-    tags: typing.Set[Label]
-    cover_url: typing.Optional[str]
-    lists: typing.Optional[typing.Sequence[List]]
+    source_url: str
+    alt_titles: typing.Sequence[str] = dataclasses.field(default_factory=list)
+    description: typing.Optional[str] = None
+    labels: set[DataLabels] = dataclasses.field(default_factory=set)
+    tags: typing.Set[Label] = dataclasses.field(default_factory=set)
+    lists: typing.Sequence[List] = dataclasses.field(default_factory=list)
+    cover_id: typing.Optional[str] = None
+    id: typing.Optional[str] = None
 
     @property
     def aired(self):
@@ -79,9 +95,8 @@ class PendingCard:
 class ScrappedData:
     titles: typing.Sequence[str]
     url: str
-    cover: typing.Union[None, bytes, str]
     tags: typing.Set[str]
-    description: typing.Optional[str]
-    tags: set[str]
-    labels: set[DataLabels]
-    parts: dict[str, list[str]]
+    labels: typing.Set[DataLabels]
+    parts: typing.Sequence[List]
+    cover: typing.Optional[bytes] = None
+    description: typing.Optional[str] = None

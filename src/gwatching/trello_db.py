@@ -2,8 +2,8 @@ import abc
 import datetime
 import functools
 import io
+import itertools
 import logging
-import mimetypes
 import re
 import typing
 
@@ -42,7 +42,7 @@ class DescriptionParser(abc.ABC):
 
 
 class DescriptionParserV0(DescriptionParser):
-    _re_checklist_item = re.compile(r"\*\*(?P<number>-?\d+)\*\*:\s*(:?\*(?P<name>.*)\*)?\s*(:?\[(?P<date>[\d-]+)\])?")
+    _re_checklist_item = re.compile(r"\*\*(?P<number>-?\d+)\*\*(:?:\s*(:?\*(?P<name>.*)\*)?\s*(:?\[(?P<date>[\d-]+)\])?)?")
 
     def parse_checklist_item(self, item: dict) -> ListItem:
         if item["name"].startswith("*"):
@@ -156,48 +156,66 @@ class CardBag:
         super(CardBag, self).__init__()
         self._by_id: dict[str, Card] = {}
         self._by_source_url: dict[str, Card] = {}
-        self.pending: list[PendingCard] = []
+        self._pending: dict[str, PendingCard] = {}
 
     def add(self, card: Card):
         if card.id in self._by_id:
             raise DuplicatedEntryException(f"Card with id {card.id} already exist")
         if card.source_url in self._by_source_url:
-            raise DuplicatedEntryException(f"Card with source url {card.source_url} already exist")
+            raise DuplicatedEntryException(f"Card with source url {card.source_url} already exist: {card.id} vs. {self._by_source_url[card.source_url].id}")
 
         self._by_id[card.id] = self._by_source_url[card.source_url] = card
 
+        if card.id in self._pending:
+            del self._pending[card.id]
+
     def add_pending(self, card: PendingCard):
-        self.pending.append(card)
+        self._pending[card.id] = card
+
+    def get_pending(self):
+        return self._pending.values()
+
+    def by_id(self, id: str):
+        return self._by_id[id]
+
+    def __len__(self):
+        return len(self._by_id)
+
+    def __iter__(self):
+        return iter(self._by_id.values())
 
 
 class DataFormatter:
     _re_card_source_url_host = re.compile(r'^[a-z]+://([^/]+).*$')
 
-    def format_cover(self, card: ScrappedData):
-        with PIL.Image.open(io.BytesIO(card.cover)) as im:
-            if len(card.cover) > (1 << 21):
-                cover_data = io.BytesIO()
-                im.save(cover_data, "JPEG")
-                mime_type = "image/jpeg"
-            else:
-                cover_data = card.cover
-                mime_type = mimetypes.guess_type("file.%s" % im.format)[0]
+    @classmethod
+    def format_cover(cls, cover: bytes):
+        with PIL.Image.open(io.BytesIO(cover)) as im:
+            tmp = io.BytesIO()
+            im.save(tmp, "JPEG")
 
-        return cover_data, mime_type
+            # mime_type = mimetypes.guess_type("file.%s" % im.format)[0]
 
-    def format_description(self, card: Card):
+            return tmp.getvalue(), "image/jpeg"
+
+    def format_description(self, source_url: str, card: typing.Union[ScrappedData, Card]):
         lines = []
 
-        if card.alt_titles:
-            if len(card.alt_titles) > 1:
-                lines.append("> Alt titles:\n%s\n\n" % ("\n".join("> *%s*" % i for i in card.alt_titles)))
+        if hasattr(card, "alt_titles"):
+            alt_titles = card.alt_titles
+        else:
+            alt_titles = card.titles[1:]
+
+        if alt_titles:
+            if len(alt_titles) > 1:
+                lines.append("> Alt titles:\n%s\n\n" % ("\n".join("> *%s*" % i for i in alt_titles)))
             else:
-                lines.append(f"> Alt title: *{card.alt_titles[0]}*\n\n")
+                lines.append(f"> Alt title: *{alt_titles[0]}*\n\n")
 
         if card.description:
             lines.extend([card.description, ""])
 
-        source_name = self._re_card_source_url_host.match(card.source_url).group(1)
+        source_name = self._re_card_source_url_host.match(source_url).group(1)
         if len(source_name) > 46:
             source_name = source_name[:46] + "..."
         else:
@@ -207,10 +225,29 @@ class DataFormatter:
             [
                 "---",
                 "",
-                f"Source: [{source_name}]({card.source_url})",
+                f"Source: [{source_name}]({source_url})",
                 "Version: 0.0.3"
             ]
         )
+
+        return "\n".join(lines)
+
+    @classmethod
+    def format_labels(cls, label_bag: LabelBag, labels: typing.Iterable[DataLabels], tags: typing.Iterable[Label]):
+        return set(label.id for label in itertools.chain((label_bag.by_name(i) for i in labels), tags))
+
+    @classmethod
+    def format_item(cls, item: ListItem):
+        if item.name or item.date:
+            parts = [f"**{item.number:02d}**:"]
+            if item.name:
+                parts.append(f"*{item.name}*")
+            if item.date:
+                parts.append(f"[{item.date}]")
+
+            return " ".join(parts)
+        else:
+            return f"{item.number:02d}"
 
 
 class UnknownVersionException(Exception):
@@ -234,6 +271,7 @@ class VersionDetector:
 
     def get_parser(self, description: str) -> DescriptionParser:
         return self._parsers[self.get_version(description)]
+
 
 
 class Database:
@@ -309,9 +347,9 @@ class Database:
                 parsed_description = parser.parse_description(card["desc"])
 
                 if card['cover']:
-                    cover_url = f"https://trello.com/1/cards/{card['id']}/attachments/{card['cover']['idAttachment']}/download/file"
+                    cover_id = card['cover']['idAttachment']
                 else:
-                    cover_url = None
+                    cover_id = None
 
                 card_checklists = []
 
@@ -328,7 +366,7 @@ class Database:
                 card_model = Card(
                     id=card["id"],
                     lists=card_checklists,
-                    cover_url=cover_url,
+                    cover_id=cover_id,
                     title=card["name"],
                     tags=labels.tags(),
                     labels=labels.data(),
@@ -344,16 +382,20 @@ class Database:
         known_labels: dict[str, str] = dict()
         duplicated_labels: dict[str, list[str]] = dict()
         used_labels: set[str] = set()
+        empty_labels: set[str] = set()
 
         # TODO: don't touch colored labels?
 
         for label in self._get_api_labels():
             name = label["name"]
             id = label["id"]
-            if name in known_labels:
-                duplicated_labels.setdefault(name, []).append(id)
+            if not name:
+                empty_labels.add(id)
             else:
-                known_labels[name] = id
+                if name in known_labels:
+                    duplicated_labels.setdefault(name, []).append(id)
+                else:
+                    known_labels[name] = id
 
         print(f"Found {len(duplicated_labels)} duplicated labels")
 
@@ -388,11 +430,166 @@ class Database:
             self._logger.warning(f"Removing unused label {label_id}")
             self._session.delete(f"{self._url}/labels/{label_id}").raise_for_status()
 
-    def update_card(self, card: Card, scrapped: ScrappedData):
-        pass
-
-    def save_pending_card(self, pending: PendingCard, scrapped: ScrappedData):
-        pass
+        print(f"Removing {len(empty_labels)} empty labels")
+        for label_id in empty_labels:
+            self._logger.warning(f"Removing empty label {label_id}")
+            self._session.delete(f"{self._url}/labels/{label_id}").raise_for_status()
 
     def get_pending_cards(self):
-        return self._cards.pending
+        return tuple(self._cards.get_pending())
+
+    def list_cards(self) -> typing.Iterable[Card]:
+        return iter(self._cards)
+
+    def setup(self):
+        colors = {
+            DataLabels.ANIME: "green",
+            DataLabels.MOVIE: "yellow",
+            DataLabels.SERIES: "orange",
+            DataLabels.CARTOON: "red",
+            DataLabels.BOOKS: "purple",
+            DataLabels.AIRING_ENDED: "black"
+        }
+
+        for name in DataLabels:
+            color = colors.get(name, "black")
+            self._ensure_trello_label(name.value, color)
+
+    def _ensure_trello_label(self, name, color=None):
+        try:
+            label = self._labels.by_name(name)
+        except KeyError:
+            ret = self._session.post(f"{self._url}/boards/{self._board_id}/labels", params={
+                "name": name,
+                "color": color
+            })
+            ret.raise_for_status()
+            label = Label(id=ret.json()["id"], name=name, color=color)
+            self._labels.add(label)
+
+        return label
+
+    def _ensure_tags(self, names: typing.Iterable[str]):
+        for name in names:
+            yield self._ensure_trello_label(name, color=None)
+
+    def _save_card_fields(self, is_new: bool, card: Card, scrapped: ScrappedData):
+        card_fields = {}
+        if is_new or card.title != scrapped.titles[0]:
+            card.title = card_fields["name"] = scrapped.titles[0]
+
+        scrapped_description = self._formatter.format_description(scrapped.url, scrapped)
+        if is_new or self._formatter.format_description(card.source_url, card) != scrapped_description:
+            card_fields["desc"] = scrapped_description
+            card.alt_titles = scrapped.titles[1:]
+            card.source_url = scrapped.url
+            card.description = scrapped.description
+
+        if is_new or scrapped.labels != card.labels or scrapped.tags != set(i.name for i in card.tags):
+            scrapped_tags = set(self._ensure_tags(scrapped.tags))
+            card_fields["idLabels"] = ",".join(
+                self._formatter.format_labels(self._labels, scrapped.labels, scrapped_tags)
+            )
+            card.labels = scrapped.labels
+            card.tags = scrapped_tags
+
+        self._session.put(f"{self._url}/cards/{card.id}", params=card_fields).raise_for_status()
+        if is_new:
+            self._cards.add(card)
+
+    def _save_card_lists(self, card: Card, scrapped: ScrappedData):
+
+        combined_parts = []
+        card_part: List
+        scrapped_part: List
+        for card_part, scrapped_part in itertools.zip_longest(list(card.lists), scrapped.parts):
+            if not card_part:
+                ret = self._session.post(f"{self._url}/checklists", params={
+                    "idCard": card.id,
+                    "name": scrapped_part.name
+                })
+                ret.raise_for_status()
+                part = List(id=ret.json()["id"], name=scrapped_part.name)
+                self._save_card_listitems(part, scrapped_part)
+            elif not scrapped_part:
+                self._session.delete(f"{self._url}/checklists/{card_part.id}")
+                continue
+            elif card_part.name != scrapped_part.name:
+                self._session.put(f"{self._url}/checklists/{card_part.id}", params={"name": scrapped_part.name}).raise_for_status()
+                card_part.name = scrapped_part.name
+                part = card_part
+                self._save_card_listitems(card_part, scrapped_part)
+            else:
+                part = card_part
+                self._save_card_listitems(card_part, scrapped_part)
+
+            combined_parts.append(part)
+
+        card.lists = combined_parts
+
+    def _save_card_listitems(self, card_list: List, scrapped_list: List):
+        combined_items = []
+        for pos, (card_item, scrapped_item) in enumerate(itertools.zip_longest(list(card_list.items), scrapped_list.items)):
+            if not card_item:
+                ret = self._session.post(f"{self._url}/checklists/{card_list.id}/checkItems", params={
+                    "name": self._formatter.format_item(scrapped_item)
+                })
+                ret.raise_for_status()
+                scrapped_item.id = ret.json()["id"]
+                combined_items.append(scrapped_item)
+            elif not scrapped_item:
+                self._session.delete(f"{self._url}/checklists/{card_list.id}/checkItems/{card_item.id}").raise_for_status()
+                continue
+            else:
+                scrapped_name = self._formatter.format_item(scrapped_item)
+                if scrapped_name != self._formatter.format_item(card_item):
+                    self._session.delete(f"{self._url}/checklists/{card_list.id}/checkItems/{card_item.id}").raise_for_status()
+
+                    ret = self._session.post(f"{self._url}/checklists/{card_list.id}/checkItems", params={
+                        "name": self._formatter.format_item(scrapped_item),
+                        "pos": pos
+                    })
+                    ret.raise_for_status()
+                    scrapped_item.id = ret.json()["id"]
+                    combined_items.append(scrapped_item)
+                else:
+                    combined_items.append(card_item)
+
+        card_list.items = combined_items
+
+    def _save_cover(self, card: Card, scrapped: ScrappedData):
+        if scrapped.cover and not card.cover_id:
+            self._logger.info("Setting cover ")
+            cover_data, cover_mimetype = self._formatter.format_cover(scrapped.cover)
+            ret = self._session.post(f"{self._url}/cards/{card.id}/attachments", params={
+                "name": "cover",
+                "mimeType": cover_mimetype,
+                "setCover": "true",
+            }, files={"file": cover_data})
+            ret.raise_for_status()
+            card.cover_id = ret.json()["id"]
+        if card.cover_id and not scrapped.cover:
+            ret = self._session.delete(f"{self._url}/cards/{card.id}/attachments/{card.cover_id}")
+            ret.raise_for_status()
+            card.cover_id = None
+
+    def save(self, card: typing.Union[str, Card], scrapped: ScrappedData):
+        is_new = False
+
+        if isinstance(card, str):
+            try:
+                card = self._cards.by_id(card)
+            except KeyError:
+                is_new = True
+                card = Card(
+                    id=card,
+                    source_url="",
+                    title=""
+                )
+
+        self._save_card_fields(is_new, card, scrapped)
+        self._save_card_lists(card, scrapped)
+        self._save_cover(card, scrapped)
+
+    def save_pending(self, pending: PendingCard, scrapped: ScrappedData):
+        self.save(pending.id, scrapped)
