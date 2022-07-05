@@ -152,6 +152,11 @@ class Imdb(Scrapper):
 
         genres = set(i.lower() for i in data["genre"])
 
+        if "animation" in genres:
+            labels.add(DataLabels.CARTOON)
+        elif data['@type'] == 'TVSeries':
+            labels.add(DataLabels.SERIES)
+
         images = list(
             filter(
                 None, (str(i) for i in x.xpath('//meta[@property="og:image"]/@content') if "imdb/images/logos" not in i)
