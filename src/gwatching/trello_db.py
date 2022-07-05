@@ -493,7 +493,8 @@ class Database:
             card.labels = scrapped.labels
             card.tags = scrapped_tags
 
-        self._session.put(f"{self._url}/cards/{card.id}", params=card_fields).raise_for_status()
+        if card_fields:
+            self._session.put(f"{self._url}/cards/{card.id}", params=card_fields).raise_for_status()
         if is_new:
             self._cards.add(card)
 
