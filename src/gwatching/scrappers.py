@@ -132,6 +132,12 @@ class Imdb(Scrapper):
         v = x.xpath('//script[@type="application/ld+json"]')[0]
         data = json.loads(v.text)
 
+        v = x.xpath('//script[@type="application/json" and @id="__NEXT_DATA__"]')[0]
+        next_data = json.loads(v.text)
+        release_year = next_data["props"]["pageProps"]["aboveTheFoldData"]["releaseYear"]
+        if release_year["__typename"] != "YearRange":
+            raise Exception(f"Unsupported release year range: {release_year}")
+
         url = "https://%s%s" % (self.host, data["url"])
 
         if "alternateName" in data:
@@ -143,12 +149,14 @@ class Imdb(Scrapper):
         if data['@type'] == "Movie":
             episodes = {}
             labels.add(DataLabels.MOVIE)
-            labels.add(DataLabels.AIRING_ENDED)
+            ended = True
         else:
             tid = self.re_tid.match(url).group(1)
-            episodes, ended = self.get_episodes_count(tid)
-            if ended:
-                labels.add(DataLabels.AIRING_ENDED)
+            episodes = self.get_episodes_count(tid)
+            ended = release_year["endYear"] is not None
+
+        if ended:
+            labels.add(DataLabels.AIRING_ENDED)
 
         genres = set(i.lower() for i in data["genre"])
 
@@ -188,8 +196,6 @@ class Imdb(Scrapper):
         url = "https://%s/title/%s/episodes/_ajax" % (self.host, tid)
 
         ret = []
-        ended = True
-        now = datetime.utcnow()
 
         x = self.fetch_page(url)
         seasons = x.xpath("//select[@id='bySeason']/option/@value")
@@ -216,25 +222,14 @@ class Imdb(Scrapper):
                 if air_date:
                     try:
                         date = datetime.strptime(air_date, '%d %b %Y')
-
-                        if date > now:
-                            ended = False
-
                         air_date = Date(date.year, date.month, date.day)
                     except:
                         try:
                             date = datetime.strptime(air_date, '%b %Y')
-                            if date.year >= now.year:
-                                ended = False
                             air_date = Date(date.year, date.month, None)
                         except:
                             date = datetime.strptime(air_date, '%Y')
-                            if date.year >= now.year:
-                                ended = False
-
                             air_date = Date(date.year, None, None)
-                else:
-                    ended = False
 
                 episodes.append(ListItem(
                     name=name,
@@ -244,7 +239,7 @@ class Imdb(Scrapper):
 
             ret.append(List(name="Season %d" % season_number, items=episodes))
 
-        return ret, ended
+        return ret
 
 
 class NoScrapperAvailableException(Exception):
