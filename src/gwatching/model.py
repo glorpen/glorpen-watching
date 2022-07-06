@@ -51,12 +51,18 @@ class ListItem:
     name: typing.Optional[str] = None
     date: typing.Optional[Date] = None
 
+    def __repr__(self):
+        return f"<ListItem: {self.number},{self.name},{self.date}>"
+
 
 @dataclasses.dataclass
 class List:
     name: str
     items: typing.Sequence[ListItem] = dataclasses.field(default_factory=list)
     id: typing.Optional[str] = None
+
+    def __repr__(self):
+        return f"<List: {self.name}>"
 
 
 @dataclasses.dataclass
