@@ -32,7 +32,18 @@ class Scrapper:
 
     def get(self, url: str):
         content = self.fetch_page(url)
-        data = self.get_info(content)
+
+        data = None
+        max_tries = 3
+        for i in range(1, max_tries+1):
+            try:
+                data = self.get_info(content)
+                break
+            except Exception as e:
+                if max_tries > i:
+                    self.logger.warning(f"Fetching failed with (try {i} of {max_tries})", exc_info=e)
+                else:
+                    raise e
 
         if not data:
             self.logger.error("No data found for url %r", url)
@@ -65,11 +76,8 @@ class AnimePlanet(Scrapper):
         return DataLabels.ANIME in labels
 
     def get_info(self, x):
-        try:
-            cover_url = str(x.xpath('//img[@class="screenshots"]/@src')[0])
-            description = str(x.xpath('//meta[@property="og:description"]/@content')[0])
-        except IndexError:
-            return None
+        cover_url = str(x.xpath('//img[@class="screenshots"]/@src')[0])
+        description = str(x.xpath('//meta[@property="og:description"]/@content')[0])
 
         if cover_url:
             if cover_url.startswith("/"):
