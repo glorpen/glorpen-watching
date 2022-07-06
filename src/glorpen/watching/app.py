@@ -6,17 +6,18 @@ from glorpen.watching.model import DataLabels
 from glorpen.watching.scrappers import NoScrapperAvailableException, ScrapperGuesser
 from glorpen.watching.trello_db import DataFormatter, Database, VersionDetector
 
-if __name__ == "__main__":
+
+def main():
     logging.basicConfig(level=logging.INFO)
 
     p = argparse.ArgumentParser()
-    p.add_argument("--setup", action="store_true", default=False)
-    p.add_argument("--pending", action="store_true", default=False)
-    p.add_argument("--ongoing", action="store_true", default=False)
-    p.add_argument("--ended", action="store_true", default=False)
-    p.add_argument("--by-title", default=None)
-    p.add_argument("--by-url", default=None)
-    p.add_argument("--config", default=None)
+    p.add_argument("--setup", action="store_true", default=False, help="Clean labels and provision board")
+    p.add_argument("--pending", action="store_true", default=False, help="Process pending cards")
+    p.add_argument("--ongoing", action="store_true", default=False, help="Process ongoing cards")
+    p.add_argument("--ended", action="store_true", default=False, help="Process aired/ended cards")
+    p.add_argument("--by-title", default=None, help="Process cards with given title")
+    p.add_argument("--by-url", default=None, help="Process card with given source url")
+    p.add_argument("--config", default=None, help="Path to config file")
 
     ns = p.parse_args()
 
@@ -78,3 +79,7 @@ if __name__ == "__main__":
 
             data = scrapper.get(url)
             db.save_pending(pending_card, data)
+
+
+if __name__ == "__main__":
+    main()
