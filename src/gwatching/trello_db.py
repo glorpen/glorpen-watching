@@ -18,20 +18,10 @@ api_host = 'api.trello.com'
 api_version = 1
 app_name = "Grello"
 
-MODE_READ = 1 << 0
-MODE_WRITE = 1 << 1
-MODE_ACCOUNT = 1 << 2
-
 VERSION = "0.0.3"
 
 class NotAuthorizedException(Exception):
     pass
-
-
-class TokenFetcher:
-    def __init__(self, app_key: str, app_secret: str, token_expiration='never',
-                 token_mode=MODE_READ | MODE_WRITE | MODE_ACCOUNT):
-        pass
 
 
 class DescriptionParser(abc.ABC):
