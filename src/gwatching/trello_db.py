@@ -22,6 +22,7 @@ MODE_READ = 1 << 0
 MODE_WRITE = 1 << 1
 MODE_ACCOUNT = 1 << 2
 
+VERSION = "0.0.3"
 
 class NotAuthorizedException(Exception):
     pass
@@ -226,7 +227,7 @@ class DataFormatter:
                 "---",
                 "",
                 f"Source: [{source_name}]({source_url})",
-                "Version: 0.0.3"
+                f"Version: {VERSION}"
             ]
         )
 
@@ -269,8 +270,8 @@ class VersionDetector:
             raise UnknownVersionException(f"Unknown version in: {description}")
         return m[0]
 
-    def get_parser(self, description: str) -> DescriptionParser:
-        return self._parsers[self.get_version(description)]
+    def get_parser(self, version: str) -> DescriptionParser:
+        return self._parsers[version]
 
 
 
@@ -327,11 +328,8 @@ class Database:
             try:
                 labels = LabelBag(self._labels.by_id(i) for i in card["idLabels"])
 
-                if DataLabels.BOOKS in labels.data():
-                    continue
-
                 try:
-                    parser = self._version_detector.get_parser(card["desc"])
+                    version = self._version_detector.get_version(card["desc"])
                 except UnknownVersionException:
                     self._logger.info(f"Version not found in {card['id']} / {card['name']}")
                     cards.add_pending(
@@ -344,6 +342,7 @@ class Database:
                     )
                     continue
 
+                parser = self._version_detector.get_parser(version)
                 parsed_description = parser.parse_description(card["desc"])
 
                 if card['cover']:
@@ -370,6 +369,7 @@ class Database:
                     title=card["name"],
                     tags=labels.tags(),
                     labels=labels.data(),
+                    version=version,
                     **vars(parsed_description)
                 )
                 cards.add(card_model)
@@ -383,8 +383,6 @@ class Database:
         duplicated_labels: dict[str, list[str]] = dict()
         used_labels: set[str] = set()
         empty_labels: set[str] = set()
-
-        # TODO: don't touch colored labels?
 
         for label in self._get_api_labels():
             name = label["name"]
@@ -495,8 +493,6 @@ class Database:
 
         if card_fields:
             self._session.put(f"{self._url}/cards/{card.id}", params=card_fields).raise_for_status()
-        if is_new:
-            self._cards.add(card)
 
     def _save_card_lists(self, card: Card, scrapped: ScrappedData):
 
@@ -588,7 +584,9 @@ class Database:
                     title=""
                 )
 
-        self._save_card_fields(is_new, card, scrapped)
+        self._save_card_fields(is_new or card.version != VERSION, card, scrapped)
+        if is_new:
+            self._cards.add(card)
         self._save_card_lists(card, scrapped)
         self._save_cover(card, scrapped)
 

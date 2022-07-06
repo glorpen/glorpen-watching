@@ -70,6 +70,7 @@ class ParsedRawDescription:
 class Card:
     title: str
     source_url: str
+    version: str
     alt_titles: typing.Sequence[str] = dataclasses.field(default_factory=list)
     description: typing.Optional[str] = None
     labels: set[DataLabels] = dataclasses.field(default_factory=set)
