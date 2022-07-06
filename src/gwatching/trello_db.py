@@ -352,14 +352,14 @@ class Database:
 
                 card_checklists = []
 
-                hashed_lists = dict((int(checklists[checklist_id]["pos"]), checklists[checklist_id]) for checklist_id in card["idChecklists"])
+                hashed_lists = dict((checklists[checklist_id]["pos"], checklists[checklist_id]) for checklist_id in card["idChecklists"])
                 for list_pos in sorted(hashed_lists.keys()):
                     checklist = hashed_lists[list_pos]
                     card_checklists.append(
                         List(
                             name=checklist["name"],
                             id=checklist["id"],
-                            items=list(parser.parse_checklist_item(item) for item in checklist["checkItems"])
+                            items=list(parser.parse_checklist_item(item) for item in sorted(checklist["checkItems"], key=lambda x: x["pos"]))
                         )
                     )
 
