@@ -502,13 +502,13 @@ class Database:
         scrapped_part: List
         for card_part, scrapped_part in itertools.zip_longest(list(card.lists), scrapped.parts):
             if not card_part:
-                ret = self._session.post(f"{self._url}/checklists", params={
-                    "idCard": card.id,
-                    "name": scrapped_part.name
+                ret = self._session.post(f"{self._url}/cards/{card.id}/checklists", params={
+                    "name": scrapped_part.name,
+                    "pos ": "bottom"
                 })
                 ret.raise_for_status()
                 part = List(id=ret.json()["id"], name=scrapped_part.name)
-                self._save_card_listitems(part, scrapped_part)
+                self._save_card_listitems(card, part, scrapped_part)
             elif not scrapped_part:
                 self._session.delete(f"{self._url}/checklists/{card_part.id}")
                 continue
@@ -516,21 +516,22 @@ class Database:
                 self._session.put(f"{self._url}/checklists/{card_part.id}", params={"name": scrapped_part.name}).raise_for_status()
                 card_part.name = scrapped_part.name
                 part = card_part
-                self._save_card_listitems(card_part, scrapped_part)
+                self._save_card_listitems(card, card_part, scrapped_part)
             else:
                 part = card_part
-                self._save_card_listitems(card_part, scrapped_part)
+                self._save_card_listitems(card, card_part, scrapped_part)
 
             combined_parts.append(part)
 
         card.lists = combined_parts
 
-    def _save_card_listitems(self, card_list: List, scrapped_list: List):
+    def _save_card_listitems(self, card:Card, card_list: List, scrapped_list: List):
         combined_items = []
         for pos, (card_item, scrapped_item) in enumerate(itertools.zip_longest(list(card_list.items), scrapped_list.items)):
             if not card_item:
                 ret = self._session.post(f"{self._url}/checklists/{card_list.id}/checkItems", params={
-                    "name": self._formatter.format_item(scrapped_item)
+                    "name": self._formatter.format_item(scrapped_item),
+                    "pos": "bottom"
                 })
                 ret.raise_for_status()
                 scrapped_item.id = ret.json()["id"]
@@ -541,14 +542,10 @@ class Database:
             else:
                 scrapped_name = self._formatter.format_item(scrapped_item)
                 if scrapped_name != self._formatter.format_item(card_item):
-                    self._session.delete(f"{self._url}/checklists/{card_list.id}/checkItems/{card_item.id}").raise_for_status()
-
-                    ret = self._session.post(f"{self._url}/checklists/{card_list.id}/checkItems", params={
-                        "name": self._formatter.format_item(scrapped_item),
-                        "pos": pos
-                    })
-                    ret.raise_for_status()
-                    scrapped_item.id = ret.json()["id"]
+                    self._session.put(f"{self._url}/cards/{card.id}/checkItem/{card_item.id}", params={
+                        "name": self._formatter.format_item(scrapped_item)
+                    }).raise_for_status()
+                    scrapped_item.id = card_item.id
                     combined_items.append(scrapped_item)
                 else:
                     combined_items.append(card_item)
