@@ -182,6 +182,9 @@ class CardBag:
     def by_source_url(self, url: str):
         return self._by_source_url[url]
 
+    def has_source_url(self, url: str):
+        return url in self._by_source_url
+
     def __len__(self):
         return len(self._by_id)
 
@@ -320,7 +323,7 @@ class Database:
         return self._session.get(f'{self._url}/boards/{self._board_id}/labels?limit=1000').json()
 
     @functools.cached_property
-    def _cards(self):
+    def cards(self):
         cards = CardBag()
         checklists = dict()
 
@@ -436,12 +439,6 @@ class Database:
         for label_id in empty_labels:
             self._logger.warning(f"Removing empty label {label_id}")
             self._session.delete(f"{self._url}/labels/{label_id}").raise_for_status()
-
-    def get_pending_cards(self):
-        return tuple(self._cards.get_pending())
-
-    def list_cards(self) -> typing.Iterable[Card]:
-        return iter(self._cards)
 
     def setup(self):
         colors = {
@@ -576,7 +573,7 @@ class Database:
 
         if isinstance(card, str):
             try:
-                card = self._cards.by_id(card)
+                card = self.cards.by_id(card)
             except KeyError:
                 is_new = True
                 card = Card(
@@ -588,7 +585,7 @@ class Database:
 
         if is_new:
             try:
-                existing_card = self._cards.by_source_url(scrapped.url)
+                existing_card = self.cards.by_source_url(scrapped.url)
             except KeyError:
                 pass
             else:
@@ -596,7 +593,7 @@ class Database:
 
         self._save_card_fields(is_new or card.version != VERSION, card, scrapped)
         if is_new:
-            self._cards.add(card)
+            self.cards.add(card)
         self._save_card_lists(card, scrapped)
         self._save_cover(card, scrapped)
 
