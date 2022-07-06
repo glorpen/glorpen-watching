@@ -1,5 +1,6 @@
 import argparse
 import logging
+import textwrap
 
 from glorpen.watching.config import load_config
 from glorpen.watching.model import DataLabels
@@ -10,14 +11,29 @@ from glorpen.watching.trello_db import DataFormatter, Database, VersionDetector
 def main():
     logging.basicConfig(level=logging.INFO)
 
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(
+        description="Track your shows.", epilog=textwrap.dedent(
+            """\
+                Available environment variables: .
+                
+                Config file is searched for in following order:
+                  - config path provided in commandline
+                  - CONFIG_FILE env
+                  - gwatching.yaml in current directory
+                  - ~/.config/gwatching.yaml
+                  - lastly, configuration is created from env vars: BOARD_ID, APP_KEY, APP_SECRET, USER_KEY, USER_SECRET
+                
+                To create config and register user token you can run: python -m glorpen.watching.config --help
+                """
+            ), formatter_class=argparse.RawTextHelpFormatter
+        )
     p.add_argument("--setup", action="store_true", default=False, help="Clean labels and provision board")
     p.add_argument("--pending", action="store_true", default=False, help="Process pending cards")
     p.add_argument("--ongoing", action="store_true", default=False, help="Process ongoing cards")
     p.add_argument("--ended", action="store_true", default=False, help="Process aired/ended cards")
-    p.add_argument("--by-title", default=None, help="Process cards with given title")
-    p.add_argument("--by-url", default=None, help="Process card with given source url")
-    p.add_argument("--config", default=None, help="Path to config file")
+    p.add_argument("--by-title", metavar="TITLE", default=None, help="Process cards with given title")
+    p.add_argument("--by-url", metavar="URL", default=None, help="Process card with given source url")
+    p.add_argument("--config", metavar="PATH", default=None, help="Path to config file")
 
     ns = p.parse_args()
 

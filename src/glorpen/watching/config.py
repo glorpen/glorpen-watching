@@ -1,3 +1,4 @@
+import argparse
 import dataclasses
 import os
 import pathlib
@@ -114,13 +115,17 @@ def generate_config(config_file: typing.Optional[os.PathLike]):
         pprint(config)
     else:
         pprint(f"Saving config to {config_file}")
-        with open(config_file, "wt") as f:
+        with pathlib.Path(config_file).open("wt") as f:
             f.write(config)
 
 
 if __name__ == "__main__":
+    p = argparse.ArgumentParser(prog="python -m glorpen.watching.config")
+    p.add_argument("config_file", nargs="?", help="path to save config to")
+    ns = p.parse_args()
+
     try:
-        generate_config(sys.argv[0] if sys.argv else None)
+        generate_config(ns.config_file)
     except Exception as e:
         print(str(e))
-        sys.exit(1)
+        p.exit(1)
