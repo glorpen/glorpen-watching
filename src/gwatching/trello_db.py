@@ -179,6 +179,9 @@ class CardBag:
     def by_id(self, id: str):
         return self._by_id[id]
 
+    def by_source_url(self, url: str):
+        return self._by_source_url[url]
+
     def __len__(self):
         return len(self._by_id)
 
@@ -582,6 +585,14 @@ class Database:
                     title="",
                     version=VERSION
                 )
+
+        if is_new:
+            try:
+                existing_card = self._cards.by_source_url(scrapped.url)
+            except KeyError:
+                pass
+            else:
+                raise DuplicatedEntryException(f"Pending {scrapped.url} already exists as card {existing_card.id}")
 
         self._save_card_fields(is_new or card.version != VERSION, card, scrapped)
         if is_new:
