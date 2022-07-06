@@ -3,6 +3,7 @@ import itertools
 import json
 import logging
 import re
+import typing
 from datetime import datetime
 
 import requests
@@ -135,6 +136,14 @@ class Imdb(Scrapper):
     def supports_url(self, url):
         return self.re_url.match(url) is not None
 
+    def _get_last_episode_year(self, episodes: typing.Iterable[List]):
+        max_year = 0
+        for season in episodes:
+            for episode in season.items:
+                if episode.date:
+                    max_year = max(episode.date.year, max_year)
+        return max_year
+
     def get_info(self, x):
         titles = []
 
@@ -154,15 +163,17 @@ class Imdb(Scrapper):
         titles.append(html.unescape(data["name"]))
 
         labels = set()
+        ended = False
 
         if data['@type'] == "Movie":
-            episodes = {}
+            episodes = []
             labels.add(DataLabels.MOVIE)
             ended = True
         else:
             tid = self.re_tid.match(url).group(1)
             episodes = self.get_episodes_count(tid)
-            ended = release_year["endYear"] is not None
+            if release_year["endYear"] is not None:
+                ended = release_year["endYear"] == self._get_last_episode_year(episodes) and datetime.now().year > release_year["endYear"]
 
         if ended:
             labels.add(DataLabels.AIRING_ENDED)
