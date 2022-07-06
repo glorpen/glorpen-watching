@@ -579,7 +579,8 @@ class Database:
                 card = Card(
                     id=card,
                     source_url="",
-                    title=""
+                    title="",
+                    version=VERSION
                 )
 
         self._save_card_fields(is_new or card.version != VERSION, card, scrapped)
