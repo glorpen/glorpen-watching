@@ -1,3 +1,4 @@
+import html
 import itertools
 import json
 import logging
@@ -141,8 +142,8 @@ class Imdb(Scrapper):
         url = "https://%s%s" % (self.host, data["url"])
 
         if "alternateName" in data:
-            titles.append(data["alternateName"])
-        titles.append(data["name"])
+            titles.append(html.unescape(data["alternateName"]))
+        titles.append(html.unescape(data["name"]))
 
         labels = set()
 
