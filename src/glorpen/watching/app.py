@@ -1,10 +1,10 @@
 import argparse
 import logging
 
-from gwatching.config import load_config
-from gwatching.model import DataLabels
-from gwatching.scrappers import NoScrapperAvailableException, ScrapperGuesser
-from gwatching.trello_db import DataFormatter, Database, VersionDetector
+from glorpen.watching.config import load_config
+from glorpen.watching.model import DataLabels
+from glorpen.watching.scrappers import NoScrapperAvailableException, ScrapperGuesser
+from glorpen.watching.trello_db import DataFormatter, Database, VersionDetector
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

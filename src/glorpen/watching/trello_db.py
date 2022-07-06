@@ -10,7 +10,7 @@ import typing
 import PIL.Image
 from requests_oauthlib.oauth1_session import OAuth1Session
 
-from gwatching.model import Card, DataLabels, DuplicatedEntryException, Label, List, ListItem, \
+from glorpen.watching.model import Card, DataLabels, DuplicatedEntryException, Label, List, ListItem, \
     ParsedRawDescription, \
     PendingCard, ScrappedData
 
