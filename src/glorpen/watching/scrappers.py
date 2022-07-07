@@ -36,7 +36,7 @@ class Scrapper:
 
         data = None
         max_tries = 3
-        for i in range(1, max_tries+1):
+        for i in range(1, max_tries + 1):
             try:
                 data = self.get_info(content)
                 break
@@ -129,9 +129,11 @@ class Imdb(Scrapper):
 
     def __init__(self):
         super(Imdb, self).__init__()
-        self.session.headers.update({
-            "Accept-Language": "en-US,en;q=0.5"
-        })
+        self.session.headers.update(
+            {
+                "Accept-Language": "en-US,en;q=0.5"
+            }
+        )
 
     def supports_url(self, url):
         return self.re_url.match(url) is not None
@@ -173,7 +175,8 @@ class Imdb(Scrapper):
             tid = self.re_tid.match(url).group(1)
             episodes = self.get_episodes_count(tid)
             if release_year["endYear"] is not None:
-                ended = release_year["endYear"] == self._get_last_episode_year(episodes) and datetime.now().year > release_year["endYear"]
+                ended = release_year["endYear"] == self._get_last_episode_year(episodes) and datetime.now().year > \
+                        release_year["endYear"]
 
         if ended:
             labels.add(DataLabels.AIRING_ENDED)
@@ -251,11 +254,13 @@ class Imdb(Scrapper):
                             date = datetime.strptime(air_date, '%Y')
                             air_date = Date(date.year, None, None)
 
-                episodes.append(ListItem(
-                    name=name,
-                    date=air_date or None,
-                    number=ep_num
-                ))
+                episodes.append(
+                    ListItem(
+                        name=name,
+                        date=air_date or None,
+                        number=ep_num
+                    )
+                )
 
             ret.append(List(name="Season %d" % season_number, items=episodes))
 

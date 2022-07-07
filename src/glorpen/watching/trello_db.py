@@ -16,9 +16,9 @@ from glorpen.watching.model import Card, DataLabels, DuplicatedEntryException, L
 
 api_host = 'api.trello.com'
 api_version = 1
-app_name = "Grello"
 
 VERSION = "0.0.3"
+
 
 class NotAuthorizedException(Exception):
     pass
@@ -33,7 +33,9 @@ class DescriptionParser(abc.ABC):
 
 
 class DescriptionParserV0(DescriptionParser):
-    _re_checklist_item = re.compile(r"\*\*(?P<number>-?\d+)\*\*(:?:\s*(:?\*(?P<name>.*)\*)?\s*(:?\[(?P<date>[\d-]+)\])?)?")
+    _re_checklist_item = re.compile(
+        r"\*\*(?P<number>-?\d+)\*\*(:?:\s*(:?\*(?P<name>.*)\*)?\s*(:?\[(?P<date>[\d-]+)\])?)?"
+    )
 
     def parse_checklist_item(self, item: dict) -> ListItem:
         if item["name"].startswith("*"):
@@ -153,7 +155,9 @@ class CardBag:
         if card.id in self._by_id:
             raise DuplicatedEntryException(f"Card with id {card.id} already exist")
         if card.source_url in self._by_source_url:
-            raise DuplicatedEntryException(f"Card with source url {card.source_url} already exist: {card.id} vs. {self._by_source_url[card.source_url].id}")
+            raise DuplicatedEntryException(
+                f"Card with source url {card.source_url} already exist: {card.id} vs. {self._by_source_url[card.source_url].id}"
+            )
 
         self._by_id[card.id] = self._by_source_url[card.source_url] = card
 
@@ -270,7 +274,6 @@ class VersionDetector:
         return self._parsers[version]
 
 
-
 class Database:
     _session: OAuth1Session
     _board_id: str
@@ -348,14 +351,19 @@ class Database:
 
                 card_checklists = []
 
-                hashed_lists = dict((checklists[checklist_id]["pos"], checklists[checklist_id]) for checklist_id in card["idChecklists"])
+                hashed_lists = dict(
+                    (checklists[checklist_id]["pos"], checklists[checklist_id]) for checklist_id in card["idChecklists"]
+                )
                 for list_pos in sorted(hashed_lists.keys()):
                     checklist = hashed_lists[list_pos]
                     card_checklists.append(
                         List(
                             name=checklist["name"],
                             id=checklist["id"],
-                            items=list(parser.parse_checklist_item(item) for item in sorted(checklist["checkItems"], key=lambda x: x["pos"]))
+                            items=list(
+                                parser.parse_checklist_item(item) for item in
+                                sorted(checklist["checkItems"], key=lambda x: x["pos"])
+                            )
                         )
                     )
 
@@ -392,7 +400,7 @@ class Database:
                 else:
                     known_labels[name] = id
 
-        print(f"Found {len(duplicated_labels)} duplicated labels")
+        self._logger.warning(f"Found {len(duplicated_labels)} duplicated labels")
 
         for card in self._get_api_cards():
             for label in card["labels"]:
@@ -413,19 +421,19 @@ class Database:
                     used_labels.add(id)
 
         if duplicated_labels:
-            print(f"Removing duplicated labels")
+            self._logger.warning(f"Removing duplicated labels")
             for labels in duplicated_labels.values():
                 for label_id in labels:
                     self._logger.warning(f"Removing duplicated label {label_id}")
                     self._session.delete(f"{self._url}/labels/{label_id}").raise_for_status()
 
         unused_labels = set(known_labels.values()).difference(used_labels)
-        print(f"Found {len(unused_labels)} unused labels")
+        self._logger.warning(f"Found {len(unused_labels)} unused labels")
         for label_id in unused_labels:
             self._logger.warning(f"Removing unused label {label_id}")
             self._session.delete(f"{self._url}/labels/{label_id}").raise_for_status()
 
-        print(f"Removing {len(empty_labels)} empty labels")
+        self._logger.warning(f"Removing {len(empty_labels)} empty labels")
         for label_id in empty_labels:
             self._logger.warning(f"Removing empty label {label_id}")
             self._session.delete(f"{self._url}/labels/{label_id}").raise_for_status()
@@ -448,10 +456,12 @@ class Database:
         try:
             label = self._labels.by_name(name)
         except KeyError:
-            ret = self._session.post(f"{self._url}/boards/{self._board_id}/labels", params={
-                "name": name,
-                "color": color
-            })
+            ret = self._session.post(
+                f"{self._url}/boards/{self._board_id}/labels", params={
+                    "name": name,
+                    "color": color
+                }
+            )
             ret.raise_for_status()
             label = Label(id=ret.json()["id"], name=name, color=color)
             self._labels.add(label)
@@ -492,10 +502,12 @@ class Database:
         scrapped_part: List
         for card_part, scrapped_part in itertools.zip_longest(list(card.lists), scrapped.parts):
             if not card_part:
-                ret = self._session.post(f"{self._url}/cards/{card.id}/checklists", params={
-                    "name": scrapped_part.name,
-                    "pos ": "bottom"
-                })
+                ret = self._session.post(
+                    f"{self._url}/cards/{card.id}/checklists", params={
+                        "name": scrapped_part.name,
+                        "pos ": "bottom"
+                    }
+                )
                 ret.raise_for_status()
                 part = List(id=ret.json()["id"], name=scrapped_part.name)
                 self._save_card_listitems(card, part, scrapped_part)
@@ -503,7 +515,9 @@ class Database:
                 self._session.delete(f"{self._url}/checklists/{card_part.id}")
                 continue
             elif card_part.name != scrapped_part.name:
-                self._session.put(f"{self._url}/checklists/{card_part.id}", params={"name": scrapped_part.name}).raise_for_status()
+                self._session.put(
+                    f"{self._url}/checklists/{card_part.id}", params={"name": scrapped_part.name}
+                ).raise_for_status()
                 card_part.name = scrapped_part.name
                 part = card_part
                 self._save_card_listitems(card, card_part, scrapped_part)
@@ -515,26 +529,34 @@ class Database:
 
         card.lists = combined_parts
 
-    def _save_card_listitems(self, card:Card, card_list: List, scrapped_list: List):
+    def _save_card_listitems(self, card: Card, card_list: List, scrapped_list: List):
         combined_items = []
-        for pos, (card_item, scrapped_item) in enumerate(itertools.zip_longest(list(card_list.items), scrapped_list.items)):
+        for pos, (card_item, scrapped_item) in enumerate(
+                itertools.zip_longest(list(card_list.items), scrapped_list.items)
+        ):
             if not card_item:
-                ret = self._session.post(f"{self._url}/checklists/{card_list.id}/checkItems", params={
-                    "name": self._formatter.format_item(scrapped_item),
-                    "pos": "bottom"
-                })
+                ret = self._session.post(
+                    f"{self._url}/checklists/{card_list.id}/checkItems", params={
+                        "name": self._formatter.format_item(scrapped_item),
+                        "pos": "bottom"
+                    }
+                )
                 ret.raise_for_status()
                 scrapped_item.id = ret.json()["id"]
                 combined_items.append(scrapped_item)
             elif not scrapped_item:
-                self._session.delete(f"{self._url}/checklists/{card_list.id}/checkItems/{card_item.id}").raise_for_status()
+                self._session.delete(
+                    f"{self._url}/checklists/{card_list.id}/checkItems/{card_item.id}"
+                ).raise_for_status()
                 continue
             else:
                 scrapped_name = self._formatter.format_item(scrapped_item)
                 if scrapped_name != self._formatter.format_item(card_item):
-                    self._session.put(f"{self._url}/cards/{card.id}/checkItem/{card_item.id}", params={
-                        "name": self._formatter.format_item(scrapped_item)
-                    }).raise_for_status()
+                    self._session.put(
+                        f"{self._url}/cards/{card.id}/checkItem/{card_item.id}", params={
+                            "name": self._formatter.format_item(scrapped_item)
+                        }
+                    ).raise_for_status()
                     scrapped_item.id = card_item.id
                     combined_items.append(scrapped_item)
                 else:
@@ -546,11 +568,13 @@ class Database:
         if scrapped.cover and not card.cover_id:
             self._logger.info("Setting cover ")
             cover_data, cover_mimetype = self._formatter.format_cover(scrapped.cover)
-            ret = self._session.post(f"{self._url}/cards/{card.id}/attachments", params={
-                "name": "cover",
-                "mimeType": cover_mimetype,
-                "setCover": "true",
-            }, files={"file": cover_data})
+            ret = self._session.post(
+                f"{self._url}/cards/{card.id}/attachments", params={
+                    "name": "cover",
+                    "mimeType": cover_mimetype,
+                    "setCover": "true",
+                }, files={"file": cover_data}
+            )
             ret.raise_for_status()
             card.cover_id = ret.json()["id"]
         if card.cover_id and not scrapped.cover:

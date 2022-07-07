@@ -1,5 +1,4 @@
 import dataclasses
-import datetime
 import enum
 import typing
 
@@ -15,11 +14,13 @@ class Date:
     day: typing.Optional[int] = None
 
     def __str__(self):
-        return "-".join([
-            f"{self.year:04d}",
-            "??" if self.month is None else f"{self.month:02d}",
-            "??" if self.day is None else f"{self.day:02d}",
-        ])
+        return "-".join(
+            [
+                f"{self.year:04d}",
+                "??" if self.month is None else f"{self.month:02d}",
+                "??" if self.day is None else f"{self.day:02d}",
+            ]
+        )
 
 
 @dataclasses.dataclass
