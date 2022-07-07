@@ -29,6 +29,7 @@ def load_config(config_file: typing.Optional[os.PathLike] = None):
     ]
 
     for path in map(pathlib.Path, filter(None, paths)):
+        path = path.expanduser()
         if path.exists():
             return Config(**yaml.safe_load(path.read_bytes()))
 
