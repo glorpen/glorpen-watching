@@ -62,8 +62,9 @@ class Scrapper:
         raise NotImplementedError()
 
     def fetch_page(self, url, params=None):
-        s = self.session.get(url, params=params or {}).content.decode()
-        return fromstring(s)
+        s = self.session.get(url, params=params or {})
+        s.raise_for_status()
+        return fromstring(s.content.decode())
 
 
 class AnimePlanet(Scrapper):
