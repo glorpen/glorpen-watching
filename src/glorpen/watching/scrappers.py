@@ -79,7 +79,7 @@ class AnimePlanet(Scrapper):
 
     def get_info(self, x):
         cover_url = str(x.xpath('//img[@class="screenshots"]/@src')[0])
-        description = str(x.xpath('//meta[@property="og:description"]/@content')[0])
+        description = html.unescape(str(x.xpath('//meta[@property="og:description"]/@content')[0]))
 
         if cover_url:
             if cover_url.startswith("/"):
