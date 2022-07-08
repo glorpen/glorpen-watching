@@ -68,22 +68,22 @@ class DescriptionParserV0(DescriptionParser):
 
     def parse_description(self, description: str):
         lines = description.splitlines(keepends=False)
-        position = 0
+        pos_after_alt_titles = 0
         alt_titles = []
         if lines[0].startswith("> Alt title:"):
             alt_titles.append(lines[0][14:-1])
-            position += 2
+            pos_after_alt_titles += 2
         elif lines[0].startswith("> Alt titles:"):
             for line in lines[1:]:
                 if line.startswith("> "):
                     alt_titles.append(line[3:-1])
-                    position += 1
+                    pos_after_alt_titles += 1
                 else:
                     break
-            position += 1
+            pos_after_alt_titles += 1
 
         snip_index = lines.index("---")
-        description = "\n".join(lines[position:snip_index]).strip() or None
+        description = "\n".join(lines[pos_after_alt_titles:snip_index]).strip() or None
         source_url = self._parse_source_url(lines)
 
         return ParsedRawDescription(
@@ -128,22 +128,14 @@ class LabelBag:
         return iter(self._by_id.values())
 
     def data(self) -> set[DataLabels]:
-        labels = set()
-        for name in DataLabels:
-            try:
-                self.by_name(name)
-            except KeyError:
-                continue
-            labels.add(name)
-        return labels
+        return set(more_itertools.filter_except(self.by_name, DataLabels, KeyError))
 
     def tags(self) -> set[Label]:
         data_labels = set(label.value for label in DataLabels)
         tags = set()
         for key, value in self._by_names.items():
-            if key in data_labels:
-                continue
-            tags.add(value)
+            if key not in data_labels:
+                tags.add(value)
         return tags
 
     def __len__(self):
@@ -241,7 +233,7 @@ class DataFormatter:
 
     @classmethod
     def format_labels(cls, label_bag: LabelBag, labels: typing.Iterable[DataLabels], tags: typing.Iterable[Label]):
-        return set(label.id for label in itertools.chain((label_bag.by_name(i) for i in labels), tags))
+        return set(label.id for label in itertools.chain(map(label_bag.by_name, labels), tags))
 
     @classmethod
     def format_item(cls, item: ListItem):
