@@ -1,5 +1,4 @@
 import abc
-import datetime
 import functools
 import io
 import itertools
@@ -8,9 +7,10 @@ import re
 import typing
 
 import PIL.Image
+import more_itertools
 from requests_oauthlib.oauth1_session import OAuth1Session
 
-from glorpen.watching.model import Card, DataLabels, DuplicatedEntryException, Label, List, ListItem, \
+from glorpen.watching.model import Card, DataLabels, Date, DuplicatedEntryException, Label, List, ListItem, \
     ParsedRawDescription, \
     PendingCard, ScrappedData
 
@@ -37,6 +37,12 @@ class DescriptionParserV0(DescriptionParser):
         r"\*\*(?P<number>-?\d+)\*\*(:?:\s*(:?\*(?P<name>.*)\*)?\s*(:?\[(?P<date>[\d-]+)\])?)?"
     )
 
+    @classmethod
+    def parse_date(cls, text: typing.Optional[str]):
+        if text is None:
+            return None
+        return Date(*more_itertools.map_except(int, text.split("-"), ValueError))
+
     def parse_checklist_item(self, item: dict) -> ListItem:
         if item["name"].startswith("*"):
             m = self._re_checklist_item.match(item["name"])
@@ -46,7 +52,7 @@ class DescriptionParserV0(DescriptionParser):
             return ListItem(
                 id=item["id"],
                 number=int(parts["number"]),
-                date=datetime.date(*(int(i) for i in parts["date"].split("-"))) if parts["date"] else None,
+                date=self.parse_date(parts["date"]),
                 name=parts["name"]
             )
         else:
