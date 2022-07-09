@@ -3,6 +3,7 @@ import itertools
 import json
 import logging
 import re
+import time
 import typing
 from datetime import datetime
 
@@ -35,14 +36,21 @@ class Scrapper:
         content = self.fetch_page(url)
 
         data = None
-        max_tries = 3
+        max_tries = 4
+        wait_seconds = 0
         for i in range(1, max_tries + 1):
             try:
                 data = self.get_info(content)
                 break
             except Exception as e:
                 if max_tries > i:
-                    self.logger.warning(f"Fetching failed with (try {i} of {max_tries})", exc_info=e)
+                    self.logger.warning(
+                        f"Fetching failed on try {i} of {max_tries}, retrying after {wait_seconds}s. Error was:",
+                        exc_info=e
+                    )
+                    if wait_seconds:
+                        time.sleep(wait_seconds)
+                        wait_seconds += 2
                 else:
                     raise e
 
