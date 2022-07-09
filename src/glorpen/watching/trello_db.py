@@ -443,6 +443,7 @@ class Database:
             DataLabels.SERIES: "orange",
             DataLabels.CARTOON: "red",
             DataLabels.BOOKS: "purple",
+            DataLabels.MANGA: "blue",
             DataLabels.COMPLETED: "black"
         }
 

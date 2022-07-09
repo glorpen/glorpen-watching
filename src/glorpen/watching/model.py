@@ -42,6 +42,7 @@ class DataLabels(enum.Enum):
     SERIES = "series"
     MOVIE = "movie"
     CARTOON = "cartoon"
+    MANGA = "manga"
     COMPLETED = "completed"
 
 

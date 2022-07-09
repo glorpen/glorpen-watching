@@ -7,6 +7,7 @@ import time
 import typing
 from datetime import datetime
 
+import more_itertools
 import requests
 from lxml.html import HtmlElement, fromstring
 
@@ -76,12 +77,21 @@ class AnimePlanet(Scrapper):
     host = "https://www.anime-planet.com"
     re_host = re.compile('^https?://www.anime-planet.com/')
 
+    parts_name = {
+        None: "Episodes",
+        "volumes": "Volumes",
+        "chapters": "Chapters"
+    }
+
     def supports_url(self, url):
         return bool(self.re_host.match(url))
 
     def get_info(self, doc):
         cover_url = str(doc.xpath('//img[@class="screenshots"]/@src')[0])
         description = html.unescape(str(doc.xpath('//meta[@property="og:description"]/@content')[0]))
+
+        meta_data = json.loads(doc.xpath('//script[@type="application/ld+json"]')[0].text)
+        genres = set(str(g).lower() for g in meta_data["genre"])
 
         if cover_url:
             if cover_url.startswith("/"):
@@ -90,12 +100,11 @@ class AnimePlanet(Scrapper):
         else:
             cover_data = None
 
-        ended = "Watched" in doc.xpath(
+        available_statuses = set(map(str.lower, doc.xpath(
             '//div[contains(@class, "entrySynopsis")]//form//select[@class="changeStatus"]/option/text()'
-        )
-        episodes = int(doc.xpath('//div[contains(@class, "entrySynopsis")]//form//select[@data-eps]/@data-eps')[0])
+        )))
+
         names = [doc.xpath('//h1[@itemprop="name"]/text()')[0]]
-        genres = set(str(g).lower() for g in doc.xpath('//meta[@property="video:tag"]/@content'))
         url = doc.xpath('//link[@rel="canonical"]/@href')[0]
 
         alt_title = doc.xpath('//h2[@class="aka"]/text()')
@@ -106,10 +115,26 @@ class AnimePlanet(Scrapper):
             elif alts.startswith("Alt titles: "):
                 names.extend(alt_title[0][12:].strip().split(", "))
 
-        labels = {DataLabels.ANIME}
+        labels = set()
 
-        if ended:
-            labels.add(DataLabels.COMPLETED)
+        episode_control = more_itertools.first(filter(
+            lambda x: int(x.attrib["data-eps"]) > 0,
+            doc.xpath('//div[contains(@class, "entrySynopsis")]//form//select[@data-eps]')
+        ))
+
+        if meta_data["@type"] == "BookSeries":
+            labels.add(DataLabels.MANGA)
+            if "read" in available_statuses:
+                labels.add(DataLabels.COMPLETED)
+        else:
+            labels.add(DataLabels.ANIME)
+            if "watched" in available_statuses:
+                labels.add(DataLabels.COMPLETED)
+
+        if episode_control is None:
+            parts = []
+        else:
+            parts = [List(name=self.parts_name[episode_control.attrib.get("name", None)], items=list(ListItem(number=e) for e in range(1, int(episode_control.attrib["data-eps"]) + 1)))]
 
         return ScrappedData(
             url=url,
@@ -118,7 +143,7 @@ class AnimePlanet(Scrapper):
             description=description,
             labels=labels,
             tags=genres,
-            parts=[List(name="Episodes", items=list(ListItem(number=e) for e in range(1, episodes + 1)))]
+            parts=parts
         )
 
 
