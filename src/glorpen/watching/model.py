@@ -42,7 +42,7 @@ class DataLabels(enum.Enum):
     SERIES = "series"
     MOVIE = "movie"
     CARTOON = "cartoon"
-    AIRING_ENDED = "airing ended"
+    COMPLETED = "completed"
 
 
 @dataclasses.dataclass
@@ -87,8 +87,8 @@ class Card:
     id: typing.Optional[str] = None
 
     @property
-    def aired(self):
-        return DataLabels.AIRING_ENDED in self.labels
+    def completed(self):
+        return DataLabels.COMPLETED in self.labels
 
 
 @dataclasses.dataclass

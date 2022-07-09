@@ -443,7 +443,7 @@ class Database:
             DataLabels.SERIES: "orange",
             DataLabels.CARTOON: "red",
             DataLabels.BOOKS: "purple",
-            DataLabels.AIRING_ENDED: "black"
+            DataLabels.COMPLETED: "black"
         }
 
         for name in DataLabels:

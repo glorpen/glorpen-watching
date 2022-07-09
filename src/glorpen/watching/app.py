@@ -25,7 +25,7 @@ def filter_cards(cards: typing.Iterable[Card], ns: argparse.Namespace):
             if card.title != ns.by_title and card.source_url != ns.by_url:
                 continue
         else:
-            if DataLabels.AIRING_ENDED in card.labels:
+            if DataLabels.COMPLETED in card.labels:
                 if not ns.ended:
                     continue
             else:

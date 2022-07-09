@@ -109,7 +109,7 @@ class AnimePlanet(Scrapper):
         labels = {DataLabels.ANIME}
 
         if ended:
-            labels.add(DataLabels.AIRING_ENDED)
+            labels.add(DataLabels.COMPLETED)
 
         return ScrappedData(
             url=url,
@@ -179,7 +179,7 @@ class Imdb(Scrapper):
                         release_year["endYear"]
 
         if ended:
-            labels.add(DataLabels.AIRING_ENDED)
+            labels.add(DataLabels.COMPLETED)
 
         genres = set(i.lower() for i in data["genre"])
 
@@ -190,7 +190,8 @@ class Imdb(Scrapper):
 
         images = list(
             filter(
-                None, (str(i) for i in doc.xpath('//meta[@property="og:image"]/@content') if "imdb/images/logos" not in i)
+                None,
+                (str(i) for i in doc.xpath('//meta[@property="og:image"]/@content') if "imdb/images/logos" not in i)
             )
         )
 
