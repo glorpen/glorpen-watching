@@ -8,7 +8,7 @@ import typing
 from datetime import datetime
 
 import requests
-from lxml.html import fromstring
+from lxml.html import HtmlElement, fromstring
 
 from glorpen.watching.model import DataLabels, Date, List, ListItem, PendingCard, ScrappedData
 
@@ -63,13 +63,10 @@ class Scrapper:
     def supports_url(self, url) -> bool:
         raise NotImplementedError()
 
-    def supports_labels(self, labels: set[DataLabels]) -> bool:
+    def get_info(self, doc) -> ScrappedData:
         raise NotImplementedError()
 
-    def get_info(self, url) -> ScrappedData:
-        raise NotImplementedError()
-
-    def fetch_page(self, url, params=None):
+    def fetch_page(self, url, params=None) -> HtmlElement:
         s = self.session.get(url, params=params or {})
         s.raise_for_status()
         return fromstring(s.content.decode())
@@ -80,14 +77,11 @@ class AnimePlanet(Scrapper):
     re_host = re.compile('^https?://www.anime-planet.com/')
 
     def supports_url(self, url):
-        return self.re_host.match(url) is not None
+        return bool(self.re_host.match(url))
 
-    def supports_labels(self, labels: set[DataLabels]) -> bool:
-        return DataLabels.ANIME in labels
-
-    def get_info(self, x):
-        cover_url = str(x.xpath('//img[@class="screenshots"]/@src')[0])
-        description = html.unescape(str(x.xpath('//meta[@property="og:description"]/@content')[0]))
+    def get_info(self, doc):
+        cover_url = str(doc.xpath('//img[@class="screenshots"]/@src')[0])
+        description = html.unescape(str(doc.xpath('//meta[@property="og:description"]/@content')[0]))
 
         if cover_url:
             if cover_url.startswith("/"):
@@ -96,15 +90,15 @@ class AnimePlanet(Scrapper):
         else:
             cover_data = None
 
-        ended = "Watched" in x.xpath(
+        ended = "Watched" in doc.xpath(
             '//div[contains(@class, "entrySynopsis")]//form//select[@class="changeStatus"]/option/text()'
         )
-        episodes = int(x.xpath('//div[contains(@class, "entrySynopsis")]//form//select[@data-eps]/@data-eps')[0])
-        names = [x.xpath('//h1[@itemprop="name"]/text()')[0]]
-        genres = set(str(g).lower() for g in x.xpath('//meta[@property="video:tag"]/@content'))
-        url = x.xpath('//link[@rel="canonical"]/@href')[0]
+        episodes = int(doc.xpath('//div[contains(@class, "entrySynopsis")]//form//select[@data-eps]/@data-eps')[0])
+        names = [doc.xpath('//h1[@itemprop="name"]/text()')[0]]
+        genres = set(str(g).lower() for g in doc.xpath('//meta[@property="video:tag"]/@content'))
+        url = doc.xpath('//link[@rel="canonical"]/@href')[0]
 
-        alt_title = x.xpath('//h2[@class="aka"]/text()')
+        alt_title = doc.xpath('//h2[@class="aka"]/text()')
         if alt_title:
             alts = alt_title[0].strip()
             if alts.startswith("Alt title: "):
@@ -133,9 +127,6 @@ class Imdb(Scrapper):
     re_tid = re.compile('^.*/title/(tt[0-9]+).*$')
     re_url = re.compile('^https?://' + host + '/')
 
-    def supports_labels(self, labels: set[DataLabels]) -> bool:
-        return bool({DataLabels.MOVIE, DataLabels.SERIES, DataLabels.CARTOON}.intersection())
-
     def __init__(self):
         super(Imdb, self).__init__()
         self.session.headers.update(
@@ -145,7 +136,7 @@ class Imdb(Scrapper):
         )
 
     def supports_url(self, url):
-        return self.re_url.match(url) is not None
+        return bool(self.re_url.match(url))
 
     def _get_last_episode_year(self, episodes: typing.Iterable[List]):
         max_year = 0
@@ -155,13 +146,13 @@ class Imdb(Scrapper):
                     max_year = max(episode.date.year, max_year)
         return max_year
 
-    def get_info(self, x):
+    def get_info(self, doc):
         titles = []
 
-        v = x.xpath('//script[@type="application/ld+json"]')[0]
+        v = doc.xpath('//script[@type="application/ld+json"]')[0]
         data = json.loads(v.text)
 
-        v = x.xpath('//script[@type="application/json" and @id="__NEXT_DATA__"]')[0]
+        v = doc.xpath('//script[@type="application/json" and @id="__NEXT_DATA__"]')[0]
         next_data = json.loads(v.text)
         release_year = next_data["props"]["pageProps"]["aboveTheFoldData"]["releaseYear"]
         if release_year["__typename"] != "YearRange":
@@ -199,7 +190,7 @@ class Imdb(Scrapper):
 
         images = list(
             filter(
-                None, (str(i) for i in x.xpath('//meta[@property="og:image"]/@content') if "imdb/images/logos" not in i)
+                None, (str(i) for i in doc.xpath('//meta[@property="og:image"]/@content') if "imdb/images/logos" not in i)
             )
         )
 
@@ -210,7 +201,7 @@ class Imdb(Scrapper):
 
         description = ("\n".join(
             i.strip() for i in
-            x.xpath('//span[@data-testid="plot-xl"]/text()')
+            doc.xpath('//span[@data-testid="plot-xl"]/text()')
         )).strip()
 
         return ScrappedData(
@@ -306,10 +297,6 @@ class ScrapperGuesser:
 
     def get_for_pending(self, card: PendingCard):
         for scrapper in self._scrappers:
-            if card.labels:
-                if not scrapper.supports_labels(card.labels):
-                    continue
-
             for url in self.find_urls(card):
                 if scrapper.supports_url(url):
                     return url, scrapper
