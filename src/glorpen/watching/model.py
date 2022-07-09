@@ -37,7 +37,7 @@ class Label:
 
 
 class DataLabels(enum.Enum):
-    BOOKS = "książki"
+    BOOKS = "books"
     ANIME = "anime"
     SERIES = "series"
     MOVIE = "movie"

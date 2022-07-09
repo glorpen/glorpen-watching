@@ -268,6 +268,79 @@ class Imdb(Scrapper):
         return ret
 
 
+class LibraryThing(Scrapper):
+    re_url = re.compile('^https?://(?:www.)?librarything.com/')
+    re_tag_cloud = re.compile(r'ajax_work_makeworkCloud\((\d+), (\d+)\)')
+    re_font_size = re.compile(r'\d(?:.\d)?')
+
+    ignored_tags = {
+        "own", "read", "1001", "1001 books", "ebook", "to-read", "unread"
+    }
+
+    def supports_url(self, url) -> bool:
+        return bool(self.re_url.match(url))
+
+    def fetch_tags(self, work: int, check: int):
+        req = self.session.post(f"https://www.librarything.com/ajax_work_makeworkCloud.php?work={work}&check={check}")
+        req.raise_for_status()
+        return self.select_tags(fromstring(req.content))
+
+    def select_tags(self, doc_tags):
+        ret = {}
+
+        for tag_container in doc_tags.xpath("//div[@class='tags tagcloud_tags']/span[@class='tag']"):
+            tag_value = float(self.re_font_size.search(tag_container.attrib["style"]).group(0))
+            tag_name = tag_container.xpath(".//a/text()")[0].lower()
+
+            ret[tag_name] = tag_value
+
+        return ret
+
+    def filter_tags(self, tags: dict[str, float]):
+        for name, value in tags.items():
+            if value < 1:
+                continue
+            if name in self.ignored_tags:
+                continue
+            yield name
+
+    def get_info(self, doc: HtmlElement) -> ScrappedData:
+        x_summary = doc.xpath("//tr[contains(@class, 'wslsummary')]//div[@class='showmore']")
+        if x_summary:
+            x_summary = x_summary[0]
+            description = "".join(filter(None, x_summary.xpath("./text()") + x_summary.xpath("./u/text()")))
+        else:
+            description = None
+
+        url = doc.xpath("/html/head/link[@rel='canonical']/@href")[0]
+        work_id = int(url.split("/")[-1])
+
+        tag_js = doc.xpath("/html/body/script[contains(text(), 'ajax_work_makeworkCloud')][1]/text()")
+        if tag_js:
+            m = self.re_tag_cloud.search(tag_js[0])
+            tags = set(self.filter_tags(self.fetch_tags(m.group(1), m.group(2))))
+        else:
+            tags = set(self.filter_tags(self.select_tags(doc)))
+
+        # take last srcset url, it probably is the biggest
+        # also be lazy and assume that there is no x10 srcset
+        cover_url = doc.xpath("//div[@id='maincover']/img/@srcset")[0].split(", ")[-1][0:-3]
+        title = doc.xpath("//h1/text()")[0].strip()
+        author = doc.xpath("//h2/a/text()")[0].strip()
+
+        return ScrappedData(
+            description=description,
+            titles=[
+                f'"{title}", {author}'
+            ],
+            labels={DataLabels.BOOKS, DataLabels.COMPLETED},
+            cover=self.session.get(cover_url).content if cover_url else None,
+            parts=[],
+            tags=tags,
+            url=url
+        )
+
+
 class NoScrapperAvailableException(Exception):
     pass
 
@@ -277,6 +350,7 @@ class ScrapperGuesser:
 
     _scrappers = [
         AnimePlanet(),
+        LibraryThing(),
         Imdb()
     ]
 

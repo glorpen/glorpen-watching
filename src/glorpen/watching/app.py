@@ -18,9 +18,6 @@ console = logging.root.getChild("console")
 
 def filter_cards(cards: typing.Iterable[Card], ns: argparse.Namespace):
     for card in cards:
-        if DataLabels.BOOKS in card.labels:
-            continue
-
         if ns.by_title or ns.by_url:
             if card.title != ns.by_title and card.source_url != ns.by_url:
                 continue
@@ -38,9 +35,6 @@ def filter_cards(cards: typing.Iterable[Card], ns: argparse.Namespace):
 def filter_pending_cards(cards: typing.Iterable[PendingCard], ns: argparse.Namespace,
                          scrapper_guesser: ScrapperGuesser):
     for pending_card in cards:
-        if DataLabels.BOOKS in pending_card.labels:
-            continue
-
         try:
             url, scrapper = scrapper_guesser.get_for_pending(pending_card)
         except NoScrapperAvailableException:
