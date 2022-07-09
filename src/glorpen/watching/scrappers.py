@@ -42,7 +42,7 @@ class Scrapper:
             try:
                 data = self.get_info(content)
                 break
-            except Exception as e:
+            except requests.HTTPError as e:
                 if max_tries > i:
                     self.logger.warning(
                         f"Fetching failed on try {i} of {max_tries}, retrying after {wait_seconds}s. Error was:",
