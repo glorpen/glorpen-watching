@@ -1,3 +1,4 @@
+import functools
 import html
 import itertools
 import json
@@ -9,9 +10,12 @@ from datetime import datetime
 
 import more_itertools
 import requests
-from lxml.html import HtmlElement, fromstring
+import user_agent
+from lxml.html import HtmlElement, fromstring, tostring
 
 from glorpen.watching.model import DataLabels, Date, List, ListItem, PendingCard, ScrappedData
+
+logger = logging.root.getChild(__name__)
 
 sre_http = '(?:(?:https?|ftp):\/\/)(?:\S+(?::\S*)?@)?(?:(?!(?:10|127)(?:\.\d{1,3}){3})(?!(?:169\.254|192\.168)(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,}))\.?)(?::\d{2,5})?(?:[/?#]\S*)?'
 
@@ -28,37 +32,18 @@ class Scrapper:
         self.logger = logging.root.getChild(self.__class__.__name__)
         self.session = requests.Session()
         self.session.headers.update(
-            {
-                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:77.0) Gecko/20100101 Firefox/77.0'
-            }
+            {'User-Agent': user_agent.generate_user_agent()}
         )
 
     def get(self, url: str):
         content = self.fetch_page(url)
-
-        data = None
-        max_tries = 4
-        wait_seconds = 0
-        for i in range(1, max_tries + 1):
-            try:
-                data = self.get_info(content)
-                break
-            except requests.HTTPError as e:
-                if max_tries > i:
-                    self.logger.warning(
-                        f"Fetching failed on try {i} of {max_tries}, retrying after {wait_seconds}s. Error was:",
-                        exc_info=e
-                    )
-                    if wait_seconds:
-                        time.sleep(wait_seconds)
-                        wait_seconds += 2
-                else:
-                    raise e
-
-        if not data:
-            self.logger.error("No data found for url %r", url)
-            return
-
+        try:
+            data = self.get_info(content)
+        except Exception as e:
+            self.logger.exception(e)
+            with open("out.html", "wb") as f:
+                f.write(tostring(content))
+            raise e
         return data
 
     def supports_url(self, url) -> bool:
@@ -73,6 +58,28 @@ class Scrapper:
         return fromstring(s.content.decode())
 
 
+def limit(max_requests_per_second: float):
+    def inner(f: typing.Callable):
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            now = time.time()
+            if wrapper.last_request_time is not None:
+                diff_seconds = (now - wrapper.last_request_time)
+                seconds_to_wait = 1.0/max_requests_per_second - diff_seconds
+                if seconds_to_wait > 0:
+                    logger.info(f"sleeping for {seconds_to_wait}")
+                    time.sleep(seconds_to_wait)
+
+            wrapper.last_request_time = now
+            return f(*args, **kwargs)
+
+        wrapper.last_request_time: typing.Optional[float] = time.time()
+
+        return wrapper
+
+    return inner
+
+
 class AnimePlanet(Scrapper):
     host = "https://www.anime-planet.com"
     re_host = re.compile('^https?://www.anime-planet.com/')
@@ -83,8 +90,14 @@ class AnimePlanet(Scrapper):
         "chapters": "Chapters"
     }
 
+    max_requests_per_second = 1 / 5
+
     def supports_url(self, url):
         return bool(self.re_host.match(url))
+
+    @limit(max_requests_per_second=max_requests_per_second)
+    def fetch_page(self, url, params=None) -> HtmlElement:
+        return super(AnimePlanet, self).fetch_page(url, params=params)
 
     def get_info(self, doc):
         cover_url = str(doc.xpath('//img[@class="screenshots"]/@src')[0])
@@ -100,9 +113,13 @@ class AnimePlanet(Scrapper):
         else:
             cover_data = None
 
-        available_statuses = set(map(str.lower, doc.xpath(
-            '//div[contains(@class, "entrySynopsis")]//form//select[@class="changeStatus"]/option/text()'
-        )))
+        available_statuses = set(
+            map(
+                str.lower, doc.xpath(
+                    '//div[contains(@class, "entrySynopsis")]//form//select[@class="changeStatus"]/option/text()'
+                )
+            )
+        )
 
         names = [doc.xpath('//h1[@itemprop="name"]/text()')[0]]
         url = doc.xpath('//link[@rel="canonical"]/@href')[0]
@@ -117,10 +134,13 @@ class AnimePlanet(Scrapper):
 
         labels = set()
 
-        episode_control = more_itertools.first(filter(
-            lambda x: int(x.attrib["data-eps"]) > 0,
-            doc.xpath('//div[contains(@class, "entrySynopsis")]//form//select[@data-eps]')
-        ))
+        episode_control = more_itertools.first(
+            filter(
+                lambda x: int(x.attrib["data-eps"]) > 0,
+                doc.xpath('//div[contains(@class, "entrySynopsis")]//form//select[@data-eps]')
+            ),
+            None
+        )
 
         if meta_data["@type"] == "BookSeries":
             labels.add(DataLabels.MANGA)
@@ -134,7 +154,10 @@ class AnimePlanet(Scrapper):
         if episode_control is None:
             parts = []
         else:
-            parts = [List(name=self.parts_name[episode_control.attrib.get("name", None)], items=list(ListItem(number=e) for e in range(1, int(episode_control.attrib["data-eps"]) + 1)))]
+            parts = [List(
+                name=self.parts_name[episode_control.attrib.get("name", None)],
+                items=list(ListItem(number=e) for e in range(1, int(episode_control.attrib["data-eps"]) + 1))
+            )]
 
         return ScrappedData(
             url=url,

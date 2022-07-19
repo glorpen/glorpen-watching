@@ -18,4 +18,4 @@ COPY --from=build /image/usr/local/ /usr/local/
 
 ENTRYPOINT ["python", "-m", "glorpen.watching.cron"]
 
-LABEL org.opencontainers.image.version="1.0.0"
+LABEL org.opencontainers.image.version="1.0.1"
