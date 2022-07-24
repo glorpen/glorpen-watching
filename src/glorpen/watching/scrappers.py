@@ -65,7 +65,7 @@ def limit(max_requests_per_second: float):
             now = time.time()
             if wrapper.last_request_time is not None:
                 diff_seconds = (now - wrapper.last_request_time)
-                seconds_to_wait = 1.0/max_requests_per_second - diff_seconds
+                seconds_to_wait = 1.0 / max_requests_per_second - diff_seconds
                 if seconds_to_wait > 0:
                     logger.info(f"sleeping for {seconds_to_wait}")
                     time.sleep(seconds_to_wait)
@@ -74,6 +74,27 @@ def limit(max_requests_per_second: float):
             return f(*args, **kwargs)
 
         wrapper.last_request_time: typing.Optional[float] = time.time()
+
+        return wrapper
+
+    return inner
+
+
+def http_retry(max_tries: int, codes=(500,)):
+    def inner(f: typing.Callable):
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            last_error = None
+            for try_number in range(1, max_tries + 1):
+                logger.debug(f"try {try_number} of {max_tries}")
+                try:
+                    return f(*args, **kwargs)
+                except requests.exceptions.HTTPError as e:
+                    response: requests.Response = e.response
+                    last_error = e
+                    if response.status_code not in codes:
+                        raise e
+            raise last_error
 
         return wrapper
 
@@ -95,6 +116,7 @@ class AnimePlanet(Scrapper):
     def supports_url(self, url):
         return bool(self.re_host.match(url))
 
+    @http_retry(3)
     @limit(max_requests_per_second=max_requests_per_second)
     def fetch_page(self, url, params=None) -> HtmlElement:
         return super(AnimePlanet, self).fetch_page(url, params=params)
@@ -186,7 +208,12 @@ class Imdb(Scrapper):
     def supports_url(self, url):
         return bool(self.re_url.match(url))
 
-    def _get_last_episode_year(self, episodes: typing.Iterable[List]):
+    @http_retry(3)
+    def fetch_page(self, url, params=None) -> HtmlElement:
+        return super(Imdb, self).fetch_page(url, params=params)
+
+    @classmethod
+    def _get_last_episode_year(cls, episodes: typing.Iterable[List]):
         max_year = 0
         for season in episodes:
             for episode in season.items:
