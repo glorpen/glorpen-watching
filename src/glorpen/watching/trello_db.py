@@ -19,6 +19,7 @@ api_host = 'api.trello.com'
 api_version = 1
 
 VERSION = "0.0.3"
+MAX_TRELLO_LIST_SIZE = 200
 
 class ApiException(Exception):
     @classmethod
@@ -498,12 +499,25 @@ class Database:
         if card_fields:
             ApiException.raise_for_status(self._session.put(f"{self._url}/cards/{card.id}", params=card_fields))
 
+    def _normalize_card_lists(self, scrapped_lists: typing.Sequence[List]):
+        # normalize list sizes
+        for scrapped_list in scrapped_lists:
+            if len(scrapped_list.items) <= MAX_TRELLO_LIST_SIZE:
+                yield scrapped_list
+            else:
+                for index, chunk in enumerate(more_itertools.chunked(scrapped_list.items, MAX_TRELLO_LIST_SIZE), start=1):
+                    yield List(
+                        name=f"{scrapped_list.name} #{index}",
+                        items=chunk
+                    )
+
     def _save_card_lists(self, card: Card, scrapped: ScrappedData):
 
         combined_parts = []
         card_part: List
         scrapped_part: List
-        for card_part, scrapped_part in itertools.zip_longest(list(card.lists), scrapped.parts):
+
+        for card_part, scrapped_part in itertools.zip_longest(list(card.lists), self._normalize_card_lists(scrapped.parts)):
             if not card_part:
                 ret = self._session.post(
                     f"{self._url}/cards/{card.id}/checklists", params={
