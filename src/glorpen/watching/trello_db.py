@@ -8,6 +8,7 @@ import typing
 
 import PIL.Image
 import more_itertools
+import requests
 from requests_oauthlib.oauth1_session import OAuth1Session
 
 from glorpen.watching.model import Card, DataLabels, Date, DuplicatedEntryException, Label, List, ListItem, \
@@ -19,10 +20,13 @@ api_version = 1
 
 VERSION = "0.0.3"
 
+class ApiException(Exception):
+    @classmethod
+    def raise_for_status(cls, response: requests.Response):
+        if 400 <= response.status_code < 600:
+            raise cls(f'{response.status_code} Api Error: {response.reason} for url: {response.url}, got: {response.content}')
 
-class NotAuthorizedException(Exception):
-    pass
-
+        return response
 
 class DescriptionParser(abc.ABC):
     def parse_description(self, description: str) -> ParsedRawDescription:
@@ -407,13 +411,13 @@ class Database:
                 if name in duplicated_labels and id in duplicated_labels[name]:
                     self._logger.warning(f'Replacing label "{name}" on card {card["id"]} / {card["name"]}')
                     # add new label
-                    self._session.post(
+                    ApiException.raise_for_status(self._session.post(
                         f"{self._url}/cards/{card['id']}/idLabels", params={
                             "value": known_labels[name]
                         }
-                    ).raise_for_status()
+                    ))
                     # remove duplicated label
-                    self._session.delete(f"{self._url}/cards/{card['id']}/idLabels/{id}").raise_for_status()
+                    ApiException.raise_for_status(self._session.delete(f"{self._url}/cards/{card['id']}/idLabels/{id}"))
                     used_labels.add(known_labels[name])
                 else:
                     used_labels.add(id)
@@ -423,18 +427,18 @@ class Database:
             for labels in duplicated_labels.values():
                 for label_id in labels:
                     self._logger.warning(f"Removing duplicated label {label_id}")
-                    self._session.delete(f"{self._url}/labels/{label_id}").raise_for_status()
+                    ApiException.raise_for_status(self._session.delete(f"{self._url}/labels/{label_id}"))
 
         unused_labels = set(known_labels.values()).difference(used_labels)
         self._logger.warning(f"Found {len(unused_labels)} unused labels")
         for label_id in unused_labels:
             self._logger.warning(f"Removing unused label {label_id}")
-            self._session.delete(f"{self._url}/labels/{label_id}").raise_for_status()
+            ApiException.raise_for_status(self._session.delete(f"{self._url}/labels/{label_id}"))
 
         self._logger.warning(f"Removing {len(empty_labels)} empty labels")
         for label_id in empty_labels:
             self._logger.warning(f"Removing empty label {label_id}")
-            self._session.delete(f"{self._url}/labels/{label_id}").raise_for_status()
+            ApiException.raise_for_status(self._session.delete(f"{self._url}/labels/{label_id}"))
 
     def setup(self):
         colors = {
@@ -461,7 +465,7 @@ class Database:
                     "color": color
                 }
             )
-            ret.raise_for_status()
+            ApiException.raise_for_status(ret)
             label = Label(id=ret.json()["id"], name=name, color=color)
             self._labels.add(label)
 
@@ -492,7 +496,7 @@ class Database:
             card.tags = scrapped_tags
 
         if card_fields:
-            self._session.put(f"{self._url}/cards/{card.id}", params=card_fields).raise_for_status()
+            ApiException.raise_for_status(self._session.put(f"{self._url}/cards/{card.id}", params=card_fields))
 
     def _save_card_lists(self, card: Card, scrapped: ScrappedData):
 
@@ -507,16 +511,16 @@ class Database:
                         "pos ": "bottom"
                     }
                 )
-                ret.raise_for_status()
+                ApiException.raise_for_status(ret)
                 part = List(id=ret.json()["id"], name=scrapped_part.name)
                 self._save_card_listitems(card, part, scrapped_part)
             elif not scrapped_part:
                 self._session.delete(f"{self._url}/checklists/{card_part.id}")
                 continue
             elif card_part.name != scrapped_part.name:
-                self._session.put(
+                ApiException.raise_for_status(self._session.put(
                     f"{self._url}/checklists/{card_part.id}", params={"name": scrapped_part.name}
-                ).raise_for_status()
+                ))
                 card_part.name = scrapped_part.name
                 part = card_part
                 self._save_card_listitems(card, card_part, scrapped_part)
@@ -540,22 +544,22 @@ class Database:
                         "pos": "bottom"
                     }
                 )
-                ret.raise_for_status()
+                ApiException.raise_for_status(ret)
                 scrapped_item.id = ret.json()["id"]
                 combined_items.append(scrapped_item)
             elif not scrapped_item:
-                self._session.delete(
+                ApiException.raise_for_status(self._session.delete(
                     f"{self._url}/checklists/{card_list.id}/checkItems/{card_item.id}"
-                ).raise_for_status()
+                ))
                 continue
             else:
                 scrapped_name = self._formatter.format_item(scrapped_item)
                 if scrapped_name != self._formatter.format_item(card_item):
-                    self._session.put(
+                    ApiException.raise_for_status(self._session.put(
                         f"{self._url}/cards/{card.id}/checkItem/{card_item.id}", params={
                             "name": self._formatter.format_item(scrapped_item)
                         }
-                    ).raise_for_status()
+                    ))
                     scrapped_item.id = card_item.id
                     combined_items.append(scrapped_item)
                 else:
@@ -574,11 +578,11 @@ class Database:
                     "setCover": "true",
                 }, files={"file": cover_data}
             )
-            ret.raise_for_status()
+            ApiException.raise_for_status(ret)
             card.cover_id = ret.json()["id"]
         if card.cover_id and not scrapped.cover:
             ret = self._session.delete(f"{self._url}/cards/{card.id}/attachments/{card.cover_id}")
-            ret.raise_for_status()
+            ApiException.raise_for_status(ret)
             card.cover_id = None
 
     def save(self, card: typing.Union[str, Card], scrapped: ScrappedData):
