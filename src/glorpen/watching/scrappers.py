@@ -584,8 +584,8 @@ class LibraryThing(HtmlScrapper):
         # take last srcset url, it probably is the biggest
         # also be lazy and assume that there is no x10 srcset
         cover_url = doc.xpath("//div[@id='maincover']/img/@srcset")[0].split(", ")[-1][0:-3]
-        title = doc.xpath("//h1/text()")[0].strip()
-        author = doc.xpath("//h2/a/text()")[0].strip()
+        title = doc.xpath("//div[contains(@class, 'content')]//h1/text()")[0].strip()
+        author = doc.xpath("//div[contains(@class, 'content')]//h2/a/text()")[0].strip()
 
         return ScrappedData(
             description=description,
