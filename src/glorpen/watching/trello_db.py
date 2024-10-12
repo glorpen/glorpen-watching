@@ -100,7 +100,11 @@ class DescriptionParserV0(DescriptionParser):
 
 class DescriptionParserV1(DescriptionParserV0):
     def _parse_source_url(self, description_lines: list[str]):
-        return description_lines[-2].split('(')[-1][:-1]
+        url = description_lines[-2].split('(')[-1][:-1]
+        # remove some strange characters added by Trello
+        if url.endswith(' "\u200c"'):
+            url = url[:-4]
+        return url
 
 
 class LabelBag:
@@ -309,6 +313,7 @@ class Database:
         labels = LabelBag()
         for label_info in self._get_api_labels():
             del label_info["idBoard"]
+            del label_info["uses"]
             labels.add(Label(**label_info))
         return labels
 
