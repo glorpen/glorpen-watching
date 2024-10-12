@@ -9,7 +9,7 @@ from tqdm.contrib import DummyTqdmFile
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from glorpen.watching.config import load_config
-from glorpen.watching.model import Card, DataLabels, PendingCard
+from glorpen.watching.model import Card, DataLabels, PendingCard, DuplicatedEntryException
 from glorpen.watching.scrappers import NoScrapperAvailableException, ScrapperGuesser
 from glorpen.watching.trello_db import DataFormatter, Database, VersionDetector
 
@@ -139,7 +139,11 @@ def main(args=None):
                         continue
 
                     data = scrapper.get(url)
-                    db.save_pending(pending_card, data)
+                    try:
+                        db.save_pending(pending_card, data)
+                    except DuplicatedEntryException:
+                        console.warning(f"Tried to add duplicated card, removing pending {pending_card.name} / {data.titles[0]}")
+                        db.delete_pending(pending_card)
 
 
 if __name__ == "__main__":

@@ -637,3 +637,6 @@ class Database:
 
     def save_pending(self, pending: PendingCard, scrapped: ScrappedData):
         self.save(pending.id, scrapped)
+
+    def delete_pending(self, pending: PendingCard):
+        ApiException.raise_for_status(self._session.delete(f"{self._url}/cards/{pending.id}"))
