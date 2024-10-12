@@ -226,7 +226,11 @@ class AniList(Scrapper[dict]):
         }
 
     def supports_url(self, url):
-        return bool(self.re_host.match(url))
+        return bool(self.re_host.match(url)) or "anime-planet" in url
+
+    _re_remove = re.compile(r'[^a-z0-9 ]+')
+    _re_replace = re.compile(r'[:-]+')
+    _re_fold_whitespace = re.compile(r'\s+')
 
     def get_id_from_anime_planet_url(self, url: str):
         title = urllib.parse.unquote(url.split("/")[-1]).replace("-", " ")
@@ -240,8 +244,18 @@ class AniList(Scrapper[dict]):
         s = self.session.post("https://graphql.anilist.co/", json=query)
         s.raise_for_status()
         for info in s.json()["data"]["Page"]["media"]:
-            names = set(t.lower() for t in info["title"].values() if t)
-            if title in names:
+            names = set()
+            for api_title in info["title"].values():
+                if not api_title:
+                    continue
+                api_title = self._re_replace.sub(' ', api_title.lower())
+                api_title = self._re_remove.sub('', api_title)
+                api_title = self._re_fold_whitespace.sub(' ', api_title).strip()
+                if api_title:
+                    names.add(api_title)
+                    names.add(api_title.replace(" ", ''))
+
+            if title in names or title.replace(" ", '') in names:
                 return info["id"]
 
         raise Exception(f"AniList id was not found for {url}")
@@ -460,6 +474,8 @@ class Imdb(HtmlScrapper):
             r.raise_for_status()
 
             episodes = r.json()["data"]["title"]["episodes"]["episodes"]
+            if not episodes:
+                break
             for i in episodes["edges"]:
                 item = i["node"]
                 ep_info = item["series"]["displayableEpisodeNumber"]
