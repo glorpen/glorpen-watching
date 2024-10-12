@@ -48,7 +48,7 @@ class DataLabels(enum.Enum):
 
 @dataclasses.dataclass
 class ListItem:
-    number: int
+    number: int | None
     id: typing.Optional[str] = None
     name: typing.Optional[str] = None
     date: typing.Optional[Date] = None

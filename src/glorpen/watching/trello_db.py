@@ -39,7 +39,7 @@ class DescriptionParser(abc.ABC):
 
 class DescriptionParserV0(DescriptionParser):
     _re_checklist_item = re.compile(
-        r"\*\*(?P<number>-?\d+)\*\*(:?:\s*(:?\*(?P<name>.*)\*)?\s*(:?\[(?P<date>[\d-]+)\])?)?"
+        r"^(?:\*\*(?P<number>-?\d+)\*\*)?:?(?:\s*(:?\*(?P<name>.*)\*)?\s*(:?\[(?P<date>[\d-]+)\])?)?"
     )
 
     @classmethod
@@ -56,7 +56,7 @@ class DescriptionParserV0(DescriptionParser):
             parts = m.groupdict()
             return ListItem(
                 id=item["id"],
-                number=int(parts["number"]),
+                number=None if parts["number"] is None else int(parts["number"]),
                 date=self.parse_date(parts["date"]),
                 name=parts["name"]
             )
@@ -247,7 +247,9 @@ class DataFormatter:
     @classmethod
     def format_item(cls, item: ListItem):
         if item.name or item.date:
-            parts = [f"**{item.number:02d}**:"]
+            parts = []
+            if item.number is not None:
+                parts.append(f"**{item.number:02d}**:")
             if item.name:
                 parts.append(f"*{item.name}*")
             if item.date:

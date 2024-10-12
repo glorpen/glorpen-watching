@@ -1,4 +1,5 @@
 import abc
+import dataclasses
 import enum
 import functools
 import html
@@ -10,11 +11,12 @@ import textwrap
 import time
 import typing
 import urllib.parse
+from collections import OrderedDict
 from datetime import datetime
 
 import requests
 import user_agent
-from lxml.html import HtmlElement, fromstring, tostring
+from lxml.html import HtmlElement, fromstring
 
 from glorpen.watching.model import DataLabels, Date, List, ListItem, PendingCard, ScrappedData
 
@@ -315,6 +317,14 @@ class AniList(Scrapper[dict]):
         )
 
 
+@dataclasses.dataclass
+class ImdbEpisode:
+    season: str
+    episode: str
+    name: str | None
+    date: Date
+
+
 class Imdb(HtmlScrapper):
     host = "www.imdb.com"
     re_tid = re.compile('^.*/title/(tt[0-9]+).*$')
@@ -378,7 +388,7 @@ class Imdb(HtmlScrapper):
             ended = True
         else:
             tid = self.re_tid.match(url).group(1)
-            episodes = self.get_episodes_count(tid)
+            episodes = list(self.get_episodes(tid))
             if release_year["endYear"] is not None:
                 ended = release_year["endYear"] == self._get_last_episode_year(episodes) and datetime.now().year > \
                         release_year["endYear"]
@@ -420,45 +430,101 @@ class Imdb(HtmlScrapper):
             labels=labels
         )
 
-    def get_episodes_count(self, tid):
-        self.logger.debug(f"Fetching episodes for {tid}")
+    def get_episodes_query(self, tid: str, end_cursor: str):
+        return {
+            "variables": json.dumps({
+                "after": end_cursor,
+                "const": tid,
+                "first": 100,
+                "locale": "en-US",
+                "originalTitleText": False,
+                "returnUrl": "https://www.imdb.com/close_me",
+                "sort": {"by": "EPISODE_THEN_RELEASE", "order": "ASC"}
+            }),
+            "operationName": "TitleEpisodesSubPagePagination",
+            "extensions": json.dumps({"persistedQuery": {
+                "sha256Hash": "e5b755e1254e3bc3a36b34aff729b1d107a63263dec628a8f59935c9e778c70e", "version": 1}})
+        }
+
+    def get_more_episodes(self, tid: str, end_cursor: str):
+        while True:
+            r = self.session.get(
+                "https://caching.graphql.imdb.com/",
+                params=urllib.parse.urlencode(self.get_episodes_query(tid=tid, end_cursor=end_cursor),
+                                              quote_via=urllib.parse.quote),
+                headers={
+                    "Accept": "application/graphql+json, application/json",
+                    "Content-Type": "application/json"
+                }
+            )
+            r.raise_for_status()
+
+            episodes = r.json()["data"]["title"]["episodes"]["episodes"]
+            for i in episodes["edges"]:
+                item = i["node"]
+                ep_info = item["series"]["displayableEpisodeNumber"]
+                yield ImdbEpisode(
+                    name=item["titleText"]["text"],
+                    date=Date(
+                        year=item["releaseDate"]["year"],
+                        month=item["releaseDate"]["month"],
+                        day=item["releaseDate"]["day"],
+                    ) if item["releaseDate"] else None,
+                    season=ep_info["displayableSeason"]["displayableProperty"]["value"]["plainText"],
+                    episode=ep_info["episodeNumber"]["displayableProperty"]["value"]["plainText"]
+                )
+            if not episodes["pageInfo"]["hasNextPage"]:
+                break
+            end_cursor = episodes["pageInfo"]["endCursor"]
+
+    def get_episodes(self, tid: str) -> list[List]:
+        episodes = OrderedDict()
+
+        for ep in self.iter_episodes(tid):
+            name = ep.name
+            if ep.name == f'Episode #{ep.season}.{ep.episode}':
+                name = None
+
+            if ep.season not in episodes:
+                episodes[ep.season] = []
+
+            episodes[ep.season].append(
+                ListItem(
+                    name=name,
+                    date=ep.date,
+                    number=None if ep.episode == "Unknown" else int(ep.episode)
+                )
+            )
 
         ret = []
-
-        collected_seasons = False
-        pending_seasons = ["1"]
-        while pending_seasons:
-            season_number = pending_seasons.pop(0)
-            url = f"https://{self.host}/title/{tid}/episodes/?season={season_number}"
-            data = self.parse_doc_data(self.fetch_page(url), id="__NEXT_DATA__")
-
-            data_section = data["props"]["pageProps"]["contentData"]["section"]
-            data_episodes = data_section["episodes"]
-            if not collected_seasons:
-                pending_seasons.extend(list(i["value"] for i in data_section["seasons"])[1:])
-                collected_seasons = True
-
-            assert data_episodes["hasNextPage"] is False
-
-            episodes = []
-            for item in data_episodes["items"]:
-                name = item["titleText"]
-                if name == f'Episode #{season_number}.{item["episode"]}':
-                    name = None
-                episodes.append(
-                    ListItem(
-                        name=name,
-                        date=Date(
-                            year=item["releaseDate"]["year"],
-                            month=item["releaseDate"]["month"],
-                            day=item["releaseDate"]["day"],
-                        ) if item["releaseDate"] else None,
-                        number=int(item["episode"])
-                    )
-                )
-            ret.append(List(name=f"Season {season_number}", items=episodes))
+        for season, eps in episodes.items():
+            ret.append(List(name=f"Season {season}", items=eps))
 
         return ret
+
+    def iter_episodes(self, tid) -> typing.Iterable[ImdbEpisode]:
+        self.logger.debug(f"Fetching episodes for {tid}")
+
+        url = f"https://{self.host}/title/{tid}/episodes/?season=1"
+        data = self.parse_doc_data(self.fetch_page(url), id="__NEXT_DATA__")
+
+        data_section = data["props"]["pageProps"]["contentData"]["section"]
+        data_episodes = data_section["episodes"]
+
+        for item in data_episodes["items"]:
+            yield ImdbEpisode(
+                name=item["titleText"],
+                date=Date(
+                    year=item["releaseDate"]["year"],
+                    month=item["releaseDate"]["month"],
+                    day=item["releaseDate"]["day"],
+                ) if item["releaseDate"] else None,
+                episode=item["episode"],
+                season="1",
+            )
+
+        end_cursor = data_episodes["endCursor"]
+        yield from self.get_more_episodes(tid=tid, end_cursor=end_cursor)
 
 
 class LibraryThing(HtmlScrapper):
