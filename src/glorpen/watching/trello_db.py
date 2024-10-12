@@ -621,6 +621,8 @@ class Database:
                     version=VERSION
                 )
 
+        self._logger.info(f"Saving card {scrapped.titles[0]} / {card.id}")
+
         if is_new:
             try:
                 existing_card = self.cards.by_source_url(scrapped.url)
