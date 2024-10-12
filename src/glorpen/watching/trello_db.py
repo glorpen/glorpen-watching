@@ -200,7 +200,7 @@ class DataFormatter:
     def format_cover(cls, cover: bytes):
         with PIL.Image.open(io.BytesIO(cover)) as im:
             tmp = io.BytesIO()
-            im.save(tmp, "JPEG")
+            im.convert('RGB').save(tmp, "JPEG")
 
             # mime_type = mimetypes.guess_type("file.%s" % im.format)[0]
 
