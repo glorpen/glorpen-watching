@@ -1,14 +1,16 @@
+import enum
 import functools
 import html
 import itertools
 import json
 import logging
 import re
+import textwrap
 import time
 import typing
+import urllib.parse
 from datetime import datetime
 
-import more_itertools
 import requests
 import user_agent
 from lxml.html import HtmlElement, fromstring, tostring
@@ -17,7 +19,7 @@ from glorpen.watching.model import DataLabels, Date, List, ListItem, PendingCard
 
 logger = logging.root.getChild(__name__)
 
-sre_http = '(?:(?:https?|ftp):\/\/)(?:\S+(?::\S*)?@)?(?:(?!(?:10|127)(?:\.\d{1,3}){3})(?!(?:169\.254|192\.168)(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,}))\.?)(?::\d{2,5})?(?:[/?#]\S*)?'
+sre_http = r'(?:(?:https?|ftp):\/\/)(?:\S+(?::\S*)?@)?(?:(?!(?:10|127)(?:\.\d{1,3}){3})(?!(?:169\.254|192\.168)(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]-*)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,}))\.?)(?::\d{2,5})?(?:[/?#]\S*)?'
 
 
 def get_unique_list(iter):
@@ -25,7 +27,7 @@ def get_unique_list(iter):
     return [x for x in iter if not (x in seen or seen.add(x))]
 
 
-class Scrapper:
+class Scrapper[C]:
 
     def __init__(self):
         super(Scrapper, self).__init__()
@@ -49,13 +51,14 @@ class Scrapper:
     def supports_url(self, url) -> bool:
         raise NotImplementedError()
 
-    def get_info(self, doc) -> ScrappedData:
+    def get_info(self, doc: C) -> ScrappedData:
         raise NotImplementedError()
 
-    def fetch_page(self, url, params=None) -> HtmlElement:
+    def fetch_page(self, url, params=None) -> C:
         s = self.session.get(url, params=params or {})
         s.raise_for_status()
-        return fromstring(s.content.decode())
+        return s
+        # return fromstring(s.content.decode())
 
 
 def limit(max_requests_per_second: float):
@@ -101,85 +104,197 @@ def http_retry(max_tries: int, codes=(500,)):
     return inner
 
 
-class AnimePlanet(Scrapper):
-    host = "https://www.anime-planet.com"
-    re_host = re.compile('^https?://www.anime-planet.com/')
+def remove_tags(text: str):
+    return ''.join(fromstring(text).itertext())
 
-    parts_name = {
-        None: "Episodes",
-        "volumes": "Volumes",
-        "chapters": "Chapters"
-    }
 
-    max_requests_per_second = 1 / 5
+class AniListFormat(enum.Enum):
+    TV = "TV"
+    TV_SHORT = "TV_SHORT"
+    MOVIE = "MOVIE"
+    SPECIAL = "SPECIAL"
+    OVA = "OVA"
+    ONA = "ONA"
+    MUSIC = "MUSIC"
+    MANGA = "MANGA"
+    NOVEL = "NOVEL"
+    ONE_SHOT = "ONE_SHOT"
+
+    @classmethod
+    def manga(cls):
+        return {
+            cls.MANGA,
+            cls.ONE_SHOT
+        }
+
+    @classmethod
+    def anime(cls):
+        return {
+            cls.TV,
+            cls.TV_SHORT,
+            cls.MOVIE,
+            cls.SPECIAL,
+            cls.OVA,
+            cls.ONA,
+        }
+
+
+class AniListType(enum.Enum):
+    ANIME = "ANIME"
+    MANGA = "MANGA"
+
+
+class AniListStatus(enum.Enum):
+    FINISHED = "FINISHED"
+    RELEASING = "RELEASING"
+    NOT_YET_RELEASED = "NOT_YET_RELEASED"
+    CANCELLED = "CANCELLED"
+    HIATUS = "HIATUS"
+
+
+class AniList(Scrapper[dict]):
+    re_host = re.compile(r'^https?://anilist.co/[a-z]+/[0-9]+.*')
+    max_requests_per_second = 15 / 60
+
+    def get_query(self, anilist_id: int):
+        query = textwrap.dedent(f"""\
+        query ($id: Int) {{
+            Media (id: $id) {{
+                title {{
+                    romaji
+                    english
+                    native
+                }}
+                status
+                episodes
+                type
+                genres
+                tags {{
+                    name
+                }}
+                coverImage {{
+                    extraLarge
+                }}
+                chapters
+                volumes
+                siteUrl
+                description
+            }}
+        }}
+        """)
+
+        return {
+            "query": query,
+            "variables": {
+                "id": anilist_id
+            }
+        }
+
+    def get_title_query(self, title: str, type: AniListType, format: typing.Collection[AniListFormat]):
+        query = textwrap.dedent(f"""\
+        query ($title: String, $type: MediaType, $format: [MediaFormat]) {{
+            Page (perPage: 10) {{
+                media (search: $title, type: $type, format_in: $format) {{
+                    id
+                    title {{
+                        romaji
+                        english
+                        native
+                    }}
+                }}
+            }}
+        }}
+        """)
+
+        return {
+            "query": query,
+            "variables": {
+                "title": title,
+                "type": type.value,
+                "format": list(f.value for f in format)
+            }
+        }
 
     def supports_url(self, url):
         return bool(self.re_host.match(url))
 
+    def get_id_from_anime_planet_url(self, url: str):
+        title = urllib.parse.unquote(url.split("/")[-1]).replace("-", " ")
+        is_manga = "/manga/" in url
+        query = self.get_title_query(
+            title=title,
+            type=AniListType.MANGA if is_manga else AniListType.ANIME,
+            format=AniListFormat.manga() if is_manga else AniListFormat.anime(),
+        )
+
+        s = self.session.post("https://graphql.anilist.co/", json=query)
+        s.raise_for_status()
+        for info in s.json()["data"]["Page"]["media"]:
+            names = set(t.lower() for t in info["title"].values() if t)
+            if title in names:
+                return info["id"]
+
+        raise Exception(f"AniList id was not found for {url}")
+
     @http_retry(3)
     @limit(max_requests_per_second=max_requests_per_second)
-    def fetch_page(self, url, params=None) -> HtmlElement:
-        return super(AnimePlanet, self).fetch_page(url, params=params)
+    def fetch_page(self, url, params=None) -> dict:
+        if "anime-planet" in url:
+            anilist_id = self.get_id_from_anime_planet_url(url)
+        else:
+            anilist_id = int(url.split("/")[4])
 
-    def get_info(self, doc):
-        cover_url = str(doc.xpath('//img[@class="screenshots"]/@src')[0])
-        description = html.unescape(str(doc.xpath('//meta[@property="og:description"]/@content')[0]))
+        query = self.get_query(anilist_id)
+        s = self.session.post("https://graphql.anilist.co/", json=query)
+        s.raise_for_status()
+        return s.json()["data"]["Media"]
 
-        meta_data = json.loads(doc.xpath('//script[@type="application/ld+json"]')[0].text)
-        genres = set(str(g).lower() for g in meta_data["genre"])
+    def get_info(self, doc: dict):
+        cover_url = doc["coverImage"]["extraLarge"]
+        description = remove_tags(doc["description"])
+
+        tags = set(g.lower() for g in doc["genres"])
+        tags.update(g["name"].lower() for g in doc["tags"])
 
         if cover_url:
-            if cover_url.startswith("/"):
-                cover_url = self.host + cover_url
             cover_data = self.session.get(cover_url).content
         else:
             cover_data = None
 
-        available_statuses = set(
-            map(
-                str.lower, doc.xpath(
-                    '//div[contains(@class, "entrySynopsis")]//form//select[@class="changeStatus"]/option/text()'
-                )
-            )
-        )
+        title_sort = ["english", "romaji", "native"]
+        names = list(map(lambda x: x[1], sorted(doc["title"].items(), key=lambda x: title_sort.index(x[0]))))
 
-        names = [doc.xpath('//h1[@itemprop="name"]/text()')[0]]
-        url = doc.xpath('//link[@rel="canonical"]/@href')[0]
-
-        alt_title = doc.xpath('//h2[@class="aka"]/text()')
-        if alt_title:
-            alts = alt_title[0].strip()
-            if alts.startswith("Alt title: "):
-                names.append(alt_title[0][11:].strip())
-            elif alts.startswith("Alt titles: "):
-                names.extend(alt_title[0][12:].strip().split(", "))
+        url = doc["siteUrl"]
 
         labels = set()
 
-        episode_control = more_itertools.first(
-            filter(
-                lambda x: int(x.attrib["data-eps"]) > 0,
-                doc.xpath('//div[contains(@class, "entrySynopsis")]//form//select[@data-eps]')
-            ),
-            None
-        )
-
-        if meta_data["@type"] == "BookSeries":
+        entry_type = AniListType(doc["type"])
+        if entry_type is AniListType.MANGA:
             labels.add(DataLabels.MANGA)
-            if "read" in available_statuses:
+            if AniListStatus.FINISHED.value in doc["status"]:
                 labels.add(DataLabels.COMPLETED)
         else:
             labels.add(DataLabels.ANIME)
-            if "watched" in available_statuses:
+            if AniListStatus.FINISHED.value in doc["status"]:
                 labels.add(DataLabels.COMPLETED)
 
-        if episode_control is None:
-            parts = []
-        else:
+        if doc["chapters"] is not None:
             parts = [List(
-                name=self.parts_name[episode_control.attrib.get("name", None)],
-                items=list(ListItem(number=e) for e in range(1, int(episode_control.attrib["data-eps"]) + 1))
+                name="Chapters",
+                items=list(ListItem(number=e + 1) for e in range(0, doc["chapters"]))
             )]
+        elif doc["episodes"] is not None:
+            parts = [List(
+                name="Episodes",
+                items=list(ListItem(number=e + 1) for e in range(0, doc["episodes"]))
+            )]
+        elif doc["volumes"] is not None:
+            parts = [List(
+                name="Volumes",
+                items=list(ListItem(number=e + 1) for e in range(0, doc["volumes"]))
+            )]
+        else:
+            parts = []
 
         return ScrappedData(
             url=url,
@@ -187,7 +302,7 @@ class AnimePlanet(Scrapper):
             cover=cover_data,
             description=description,
             labels=labels,
-            tags=genres,
+            tags=tags,
             parts=parts
         )
 
@@ -424,7 +539,7 @@ class ScrapperGuesser:
     re_http_link = re.compile('(?P<url>' + sre_http + ')')
 
     _scrappers = [
-        AnimePlanet(),
+        AniList(),
         LibraryThing(),
         Imdb()
     ]
