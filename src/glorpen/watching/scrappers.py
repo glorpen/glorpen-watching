@@ -1,3 +1,4 @@
+import abc
 import enum
 import functools
 import html
@@ -27,7 +28,7 @@ def get_unique_list(iter):
     return [x for x in iter if not (x in seen or seen.add(x))]
 
 
-class Scrapper[C]:
+class Scrapper[S](abc.ABC):
 
     def __init__(self):
         super(Scrapper, self).__init__()
@@ -43,22 +44,29 @@ class Scrapper[C]:
             data = self.get_info(content)
         except Exception as e:
             self.logger.exception(e)
-            with open("out.html", "wb") as f:
-                f.write(tostring(content))
+            # with open("out.html", "wb") as f:
+            #     f.write(tostring(content))
             raise e
         return data
 
+    @abc.abstractmethod
     def supports_url(self, url) -> bool:
         raise NotImplementedError()
 
-    def get_info(self, doc: C) -> ScrappedData:
+    @abc.abstractmethod
+    def get_info(self, doc: S) -> ScrappedData:
         raise NotImplementedError()
 
-    def fetch_page(self, url, params=None) -> C:
+    @abc.abstractmethod
+    def fetch_page(self, url, params=None) -> S:
+        raise NotImplementedError()
+
+
+class HtmlScrapper(Scrapper[HtmlElement], abc.ABC):
+    def fetch_page(self, url, params=None) -> HtmlElement:
         s = self.session.get(url, params=params or {})
         s.raise_for_status()
-        return s
-        # return fromstring(s.content.decode())
+        return fromstring(s.content.decode())
 
 
 def limit(max_requests_per_second: float):
@@ -307,7 +315,7 @@ class AniList(Scrapper[dict]):
         )
 
 
-class Imdb(Scrapper):
+class Imdb(HtmlScrapper):
     host = "www.imdb.com"
     re_tid = re.compile('^.*/title/(tt[0-9]+).*$')
     re_url = re.compile('^https?://' + host + '/')
@@ -336,19 +344,26 @@ class Imdb(Scrapper):
                     max_year = max(episode.date.year, max_year)
         return max_year
 
+    def parse_doc_data(self, doc: HtmlElement, type: str = "application/json", id: str = None) -> dict:
+        # with open("out.html", "wb") as f:
+        #     f.write(tostring(doc))
+        if id is None:
+            q = f'//script[@type="{type}"]'
+        else:
+            q = f'//script[@type="{type}" and @id="{id}"]'
+        return json.loads(doc.xpath(q)[0].text)
+
     def get_info(self, doc):
         titles = []
 
-        v = doc.xpath('//script[@type="application/ld+json"]')[0]
-        data = json.loads(v.text)
+        data = self.parse_doc_data(doc, type="application/ld+json")
 
-        v = doc.xpath('//script[@type="application/json" and @id="__NEXT_DATA__"]')[0]
-        next_data = json.loads(v.text)
+        next_data = self.parse_doc_data(doc, id="__NEXT_DATA__")
         release_year = next_data["props"]["pageProps"]["aboveTheFoldData"]["releaseYear"]
         if release_year["__typename"] != "YearRange":
             raise Exception(f"Unsupported release year range: {release_year}")
 
-        url = "https://%s%s" % (self.host, data["url"])
+        url = data["url"]
 
         if "alternateName" in data:
             titles.append(html.unescape(data["alternateName"]))
@@ -407,58 +422,46 @@ class Imdb(Scrapper):
 
     def get_episodes_count(self, tid):
         self.logger.debug(f"Fetching episodes for {tid}")
-        url = "https://%s/title/%s/episodes/_ajax" % (self.host, tid)
 
         ret = []
 
-        x = self.fetch_page(url)
-        seasons = x.xpath("//select[@id='bySeason']/option/@value")
+        collected_seasons = False
+        pending_seasons = ["1"]
+        while pending_seasons:
+            season_number = pending_seasons.pop(0)
+            url = f"https://{self.host}/title/{tid}/episodes/?season={season_number}"
+            data = self.parse_doc_data(self.fetch_page(url), id="__NEXT_DATA__")
 
-        for season in seasons:
-            self.logger.debug(f"Fetching season {season} for {tid}")
-            x = self.fetch_page(url, params={"season": season})
+            data_section = data["props"]["pageProps"]["contentData"]["section"]
+            data_episodes = data_section["episodes"]
+            if not collected_seasons:
+                pending_seasons.extend(list(i["value"] for i in data_section["seasons"])[1:])
+                collected_seasons = True
 
-            season_number = 0 if season == "-1" else int(season)
+            assert data_episodes["hasNextPage"] is False
 
             episodes = []
-            for lp_num, ep in enumerate(
-                    x.xpath("//*[@itemtype='http://schema.org/TVSeason']//*[@itemprop='episodes']"), start=1
-            ):
-                ep_num = int(ep.xpath("./*[@itemprop='episodeNumber']/@content")[0])  # może być -1
-                name = "".join(ep.xpath(".//*[@itemprop='name']/text()")).strip()
-                air_date = "".join(ep.xpath(".//*[@class='airdate']/text()")).strip().replace('.', '')
-
-                num = lp_num if ep_num == -1 else ep_num
-
-                if name == 'Episode #%d.%d' % (int(season), num):
+            for item in data_episodes["items"]:
+                name = item["titleText"]
+                if name == f'Episode #{season_number}.{item["episode"]}':
                     name = None
-
-                if air_date:
-                    try:
-                        date = datetime.strptime(air_date, '%d %b %Y')
-                        air_date = Date(date.year, date.month, date.day)
-                    except:
-                        try:
-                            date = datetime.strptime(air_date, '%b %Y')
-                            air_date = Date(date.year, date.month, None)
-                        except:
-                            date = datetime.strptime(air_date, '%Y')
-                            air_date = Date(date.year, None, None)
-
                 episodes.append(
                     ListItem(
                         name=name,
-                        date=air_date or None,
-                        number=ep_num
+                        date=Date(
+                            year=item["releaseDate"]["year"],
+                            month=item["releaseDate"]["month"],
+                            day=item["releaseDate"]["day"],
+                        ) if item["releaseDate"] else None,
+                        number=int(item["episode"])
                     )
                 )
-
-            ret.append(List(name="Season %d" % season_number, items=episodes))
+            ret.append(List(name=f"Season {season_number}", items=episodes))
 
         return ret
 
 
-class LibraryThing(Scrapper):
+class LibraryThing(HtmlScrapper):
     re_url = re.compile('^https?://(?:www.)?librarything.com/')
     re_tag_cloud = re.compile(r'ajax_work_makeworkCloud\((\d+), (\d+)\)')
     re_font_size = re.compile(r'\d(?:.\d)?')
